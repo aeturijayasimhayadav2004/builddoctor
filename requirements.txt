@@ -19,3 +19,6 @@ openai>=1.40
 # [binary] ships prebuilt wheels, so no C compiler is needed. (Phase 3)
 sqlalchemy>=2.0
 psycopg[binary]>=3.1
+
+# The classify -> route -> act state machine in graph.py (Phase 4)
+langgraph>=0.2

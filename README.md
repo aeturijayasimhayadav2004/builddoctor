@@ -2,10 +2,11 @@
 
 An agent that watches a GitHub repo and reacts when a CI build fails.
 
-**Current stage: Phase 3.** When a workflow run fails, BuildDoctor fetches the
-logs and the triggering diff, asks a model what went wrong, posts the answer
-back to GitHub as a comment, and stores the whole thing in Postgres. The app
-and the database run together under `docker compose`.
+**Current stage: Phase 4.** When a workflow run fails, BuildDoctor fetches the
+logs and the triggering diff, asks a model what went wrong *and which of three
+lanes the failure belongs in*, then acts on that decision - comment, re-run, or
+flag for a human - and stores the whole thing in Postgres. The app and the
+database run together under `docker compose`.
 
 ## What it does now
 
@@ -16,9 +17,62 @@ and the database run together under `docker compose`.
    - lists the jobs that failed and downloads their logs
    - cuts each log down to the lines around its `##[error]` markers
    - fetches the change that triggered the run (PR diff, or commit vs parent)
-   - asks an LLM to connect the symptom to the cause
-   - posts the diagnosis as a PR comment or a commit comment
-   - writes a row to the `diagnoses` table in Postgres
+   - asks an LLM to connect the symptom to the cause **and pick a lane**
+   - runs the action for that lane (see below)
+   - writes a row to the `diagnoses` table in Postgres, including the lane
+
+## The three lanes
+
+The classifier returns one of three categories, and a small LangGraph state
+machine in `graph.py` routes to the matching action node.
+
+| Lane | Colour | When | What it does |
+| ---- | ------ | ---- | ------------ |
+| `informational` | teal | environment, dependency, config and setup problems - and **anything uncertain** | posts the diagnosis as a PR or commit comment |
+| `safe_auto_fix` | amber | the failure looks **flaky**: nothing in the diff explains it and re-running is a reasonable next step | re-runs the failed jobs of that run |
+| `needs_review` | coral | secrets / credentials / security scan failures, or a genuine bug in code or test content | on a PR: adds the `needs-review` label **and** comments. On a plain push: comments with a `NEEDS REVIEW` prefix, because a commit comment cannot carry a label |
+
+Teal is the deliberate default. The prompt says so explicitly, the schema
+validator falls back to it, and an unrecognised lane routes to it. A needless
+extra comment costs nothing; a wrong automated action costs trust.
+
+The rule that separates coral from teal is **where the fix goes**: editing
+source or test code is coral; installing a package, creating a directory, or
+editing CI config is teal. So a missing *third-party* package (pytest) is teal,
+while a missing *first-party* module the project should contain is coral.
+
+### The re-run loop guard
+
+Amber is the only lane that takes an action on your repository, so it has a
+hard guard in front of it.
+
+Before re-running anything, BuildDoctor checks `run_attempt` in the webhook
+payload. That is **GitHub's own counter**: 1 on the first try, 2 or more after
+any re-run. If it is already above 1, this failure *is* the result of a
+re-run - so re-running again would start a loop that never ends:
+
+```
+fail -> "looks flaky" -> re-run -> fail -> "looks flaky" -> re-run -> ...
+```
+
+The evidence barely changes between attempts, so the classifier would keep
+reaching the same verdict forever, burning Actions minutes. When the guard
+fires, the run is downgraded to teal and gets a comment instead.
+
+Reading GitHub's counter is more robust than BuildDoctor tracking re-runs
+itself, for four reasons:
+
+- it arrives in the payload already, so there is no window between triggering
+  a re-run and recording that we did
+- our own counter would have to survive restarts, image rebuilds and a wiped
+  database; `docker compose down -v` would erase it and re-arm the loop
+- a **human** pressing "Re-run failed jobs" also increments GitHub's counter,
+  so BuildDoctor will not pile a re-run on top of someone else's
+- there is no key to get wrong (run id? job id? commit sha?), and a drifting
+  key silently disables a guard rather than failing loudly
+
+It is the difference between remembering and observing. Observing is harder to
+get wrong.
 
 | Route | Method | Purpose |
 | ----- | ------ | ------- |
@@ -29,10 +83,11 @@ and the database run together under `docker compose`.
 
 | File | Role |
 | ---- | ---- |
-| `main.py` | Web routes, signature check, and the failure pipeline |
-| `github_client.py` | All GitHub API calls (read logs/diffs, write comments) |
+| `main.py` | Web routes, signature check, evidence gathering, and recording |
+| `graph.py` | The LangGraph state machine: classify, route, act |
+| `github_client.py` | All GitHub API calls (logs, diffs, comments, labels, re-runs) |
 | `log_excerpt.py` | Cuts a raw CI log down to the lines around the error |
-| `diagnose.py` | Sends the excerpt and diff to the LLM, returns the diagnosis |
+| `diagnose.py` | Asks the LLM for a diagnosis **and** a lane, as structured JSON |
 | `db.py` | The `diagnoses` table, and every line of SQL in the project |
 | `migrate_jsonl.py` | One-time backfill of the old `diagnoses.jsonl` history |
 | `Dockerfile` | Image for the app |
@@ -49,10 +104,13 @@ repository you are watching, with these repository permissions:
 
 | Permission | Level | Needed for |
 | ---------- | ----- | ---------- |
-| Actions | Read-only | listing jobs, downloading logs |
+| Actions | Read and write | listing jobs and downloading logs (read); re-running failed jobs for the amber lane (write) |
 | Contents | Read and write | reading commit diffs, posting commit comments |
-| Issues | Read and write | posting pull request comments |
+| Issues | Read and write | posting pull request comments, adding the `needs-review` label |
 | Pull requests | Read and write | reading PR diffs |
+
+With Actions left at Read-only, everything still works except the amber lane,
+which reports a 403 and falls back to leaving a comment.
 
 **`WEBHOOK_SECRET`** - any random string. Generate one with:
 
@@ -176,9 +234,19 @@ Diagnoses live in the `diagnoses` table in Postgres.
 | `log_excerpt` | text | the trimmed log that was sent to the model |
 | `diff_summary` | jsonb | `files_changed`, `lines_added`, `lines_removed` |
 | `diagnosis_text` | text | what the model said |
-| `posted_to` | varchar(32) | `pr_comment`, `commit_comment`, or NULL if posting failed |
-| `lane` | varchar(32) | always NULL for now; Phase 4 populates it |
-| `raw` | jsonb | everything else recorded: `run_url`, `posted_url`, `failed_jobs`, `workflow`, `model`, `diff_source`, `diff_ref`, `failed_step` |
+| `posted_to` | varchar(32) | `pr_comment`, `commit_comment`, or NULL if nothing was posted (the amber lane posts nothing) |
+| `lane` | varchar(32) | the lane that **actually ran**: `informational`, `safe_auto_fix`, or `needs_review` |
+| `raw` | jsonb | everything else recorded: `run_url`, `posted_url`, `failed_jobs`, `workflow`, `model`, `diff_source`, `diff_ref`, `failed_step`, `run_attempt`, `category_from_model`, `category_reason`, `guard_note`, `action`, `labels`, `rerun_requested` |
+
+`lane` records what happened, not what the model wanted. When the re-run guard
+downgrades amber to teal, `lane` says `informational` while
+`raw->>'category_from_model'` still says `safe_auto_fix` and
+`raw->>'guard_note'` explains why they differ. Find every guarded run with:
+
+```sql
+select id, run_id, lane, raw->>'category_from_model', raw->>'guard_note'
+from diagnoses where raw->>'guard_note' is not null;
+```
 
 Tables are created by `create_all()` on startup. There is no Alembic yet, on
 purpose - `create_all` only ever creates what is missing, so the day a column
@@ -214,6 +282,23 @@ visible in Postgres.
 `openai/gpt-oss-20b` via Groq's OpenAI-compatible endpoint at
 `https://api.groq.com/openai/v1`. Connecting a log to a diff is extraction
 and explanation, not multi-step reasoning, so a small model suits it.
+
+### Structured output
+
+The classification comes back as JSON constrained by a schema, sent as
+`response_format={"type": "json_schema", ...}` with `strict: true`. The
+provider restricts decoding to tokens the schema allows, so `category` cannot
+be anything but one of the three lanes - that is enforced *while the tokens
+are generated*, not checked afterwards.
+
+Plain JSON mode (`{"type": "json_object"}`) was tried and rejected: it
+guarantees the reply parses, but not that it has your keys. Asked for this
+schema it returned `failure_type` and `description` instead.
+
+There is still a validate-and-retry-once fallback in `diagnose.py`, because
+constrained decoding does not protect against a provider changing what it
+supports or a response being truncated. If validation fails twice the lane
+becomes `informational` - the fallback is never a lane that takes an action.
 
 Switching providers means changing three constants in `diagnose.py`
 (`BASE_URL`, `MODEL`, `API_KEY_ENV`) and adding the matching key to `.env`.

@@ -1,12 +1,16 @@
-"""BuildDoctor - Phase 2.
+"""BuildDoctor - the web layer and the evidence-gathering half.
 
-End to end: a workflow run fails, BuildDoctor pulls the evidence (the log
-around the error, plus the change that triggered the run), asks a model what
-went wrong, and posts the answer back where the person who broke it is
-looking.
+A workflow run fails, BuildDoctor pulls the evidence (the log around the
+error, plus the change that triggered the run), and hands it to the graph
+in graph.py. The graph classifies the failure into one of three lanes and
+acts accordingly:
 
-Every diagnosis is stored in Postgres (see db.py). Phase 2 appended them
-to diagnoses.jsonl; migrate_jsonl.py backfills that history into the table.
+    informational (teal)   post the diagnosis as a comment
+    safe_auto_fix (amber)  re-run the failed jobs
+    needs_review  (coral)  label the PR / flag the comment for a human
+
+Whatever the graph did is then recorded in Postgres, including which lane
+actually ran.
 """
 
 import asyncio
@@ -16,6 +20,7 @@ import hmac
 import json
 import os
 import sys
+import traceback
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -31,6 +36,7 @@ load_dotenv()
 import db  # noqa: E402
 import diagnose  # noqa: E402
 import github_client  # noqa: E402
+import graph  # noqa: E402
 from log_excerpt import extract_error_excerpt  # noqa: E402
 
 # Models return typographic characters (curly quotes, arrows) that the default
@@ -55,7 +61,7 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="BuildDoctor", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="BuildDoctor", version="0.5.0", lifespan=lifespan)
 
 PROJECT_DIR = Path(__file__).parent
 LOGS_DIR = PROJECT_DIR / "logs"
@@ -160,27 +166,6 @@ def summarise_diff(diff: str) -> dict:
     }
 
 
-def build_comment(diagnosis: str, run: dict, job_names: list, excerpt: str) -> str:
-    """Format the GitHub comment.
-
-    The diagnosis goes first because that is what lands in a notification
-    email. The evidence is collapsed underneath for whoever wants to check it.
-    """
-    failed = ", ".join(f"`{name}`" for name in job_names) or "unknown"
-    fence = "```"
-    return (
-        f"## BuildDoctor: `{run.get('name')}` failed\n\n"
-        f"{diagnosis}\n\n"
-        f"---\n"
-        f"**Failed job(s):** {failed}  \n"
-        f"**Run:** [{run.get('id')}]({run.get('html_url')})\n\n"
-        f"<details>\n<summary>Log excerpt around the error</summary>\n\n"
-        f"{fence}\n{excerpt[:5000]}\n{fence}\n\n</details>\n\n"
-        f"<sub>Posted automatically by BuildDoctor "
-        f"(model: `{diagnose.MODEL}`). Not a human review.</sub>"
-    )
-
-
 async def record_diagnosis(
     *,
     run_id: int,
@@ -189,6 +174,7 @@ async def record_diagnosis(
     diff_summary: dict,
     diagnosis_text: str,
     posted_target: str | None,
+    lane: str | None,
     extra: dict,
 ) -> int:
     """Store one diagnosis in Postgres. Returns the new row id.
@@ -204,13 +190,31 @@ async def record_diagnosis(
         diff_summary=diff_summary,
         diagnosis_text=diagnosis_text,
         posted_to=db.posted_to_column(posted_target),
-        lane=None,  # Phase 4 populates this.
+        lane=lane,
         raw=extra,
     )
 
 
 async def investigate_failure(payload: dict) -> None:
-    """Gather evidence, diagnose it, post the answer, and record it."""
+    """Run the pipeline, and never let an exception escape.
+
+    This runs as a background task. An exception escaping here is
+    reported by the server as "Exception in ASGI application" long after
+    the 200 was sent, so nobody is watching - the failure simply looks
+    like BuildDoctor ignoring the build.
+    """
+    run_id = (payload.get('workflow_run') or {}).get('id')
+    try:
+        await _investigate(payload)
+    except Exception as exc:  # noqa: BLE001
+        print(f"\n  PIPELINE FAILED for run {run_id}: "
+              f"{type(exc).__name__}: {exc}")
+        traceback.print_exc()
+        print(RULE + "\n", flush=True)
+
+
+async def _investigate(payload: dict) -> None:
+    """Gather evidence, classify it, act on the lane, and record it."""
     repo = payload["repository"]["full_name"]
     run = payload["workflow_run"]
     run_id = run["id"]
@@ -256,7 +260,10 @@ async def investigate_failure(payload: dict) -> None:
 
         try:
             text = await github_client.download_job_log(repo, job_id)
-        except github_client.GitHubError as exc:
+        except Exception as exc:  # noqa: BLE001
+            # Deliberately broad. One job's log going missing is not a
+            # reason to abandon the diagnosis - the other jobs, and the
+            # diff, may still explain the failure perfectly well.
             text = f"<log unavailable: {exc}>"
             print(f"       ERROR downloading log: {exc}")
 
@@ -307,37 +314,47 @@ async def investigate_failure(payload: dict) -> None:
         print(f"  | ... {len(diff_lines) - CONSOLE_DIFF_MAX_LINES} more lines")
     print(THIN)
 
-    # --- 4. ask the model ----------------------------------------------
-    print("\n  asking the model ...")
+    # --- 4. classify, and act on the classification --------------------
+    #
+    # Everything from here is the graph's job: decide the lane, then run
+    # the one action node that lane maps to. main.py deliberately does not
+    # know which of the three ran.
+    run_attempt = run.get("run_attempt") or 1
+    print(f"\n  run_attempt={run_attempt} (1 = first try; >1 blocks a re-run)")
+
+    initial: graph.BuildState = {
+        "payload": payload,
+        "repo": repo,
+        "run": run,
+        "run_id": run_id,
+        "run_attempt": run_attempt,
+        "job_names": job_names,
+        "first_step": first_step,
+        "log_excerpt": combined_excerpt,
+        "diff": diff_text,
+    }
+
     try:
-        diagnosis = await diagnose.diagnose_failure(
-            log_excerpt=combined_excerpt,
-            diff=diff_text,
-            repo=repo,
-            job_name=", ".join(job_names),
-            step_name=first_step,
-        )
+        final = await graph.GRAPH.ainvoke(initial)
     except diagnose.DiagnosisError as exc:
         print(f"  ERROR diagnosing: {exc}")
         return
+    except Exception as exc:  # noqa: BLE001
+        print(f"  ERROR running the graph: {exc}")
+        return
+
+    lane = final.get("lane", diagnose.FALLBACK_CATEGORY)
+    diagnosis = final.get("diagnosis", "")
+    posted = final.get("posted") or {"target": None, "url": None}
 
     print("\n  DIAGNOSIS")
     print(THIN)
     for line in diagnosis.splitlines():
         print(f"  | {line}")
     print(THIN)
+    print(f"  LANE: {lane}  ACTION: {final.get('action')}")
 
-    # --- 5. post it back to GitHub --------------------------------------
-    comment = build_comment(diagnosis, run, job_names, combined_excerpt)
-    posted = {"target": None, "ref": None, "url": None}
-    try:
-        posted = await github_client.post_diagnosis(payload, comment)
-        print(f"\n  posted as {posted['target']} comment on {posted['ref']}")
-        print(f"  {posted['url']}")
-    except github_client.GitHubError as exc:
-        print(f"  ERROR posting comment: {exc}")
-
-    # --- 6. keep the record ---------------------------------------------
+    # --- 5. keep the record ---------------------------------------------
     try:
         row_id = await record_diagnosis(
             run_id=run_id,
@@ -345,9 +362,12 @@ async def investigate_failure(payload: dict) -> None:
             log_excerpt=combined_excerpt,
             diff_summary=summarise_diff(diff_text),
             diagnosis_text=diagnosis,
-            posted_target=posted["target"],
-            # No column of their own. Kept verbatim in the raw JSONB
-            # column so nothing recorded in Phase 2 is lost.
+            posted_target=posted.get("target"),
+            # The lane that ACTUALLY RAN, which is the operational fact
+            # worth querying. When the rerun guard downgrades amber to
+            # teal, this says teal - and category_from_model below keeps
+            # what the classifier originally chose, so nothing is lost.
+            lane=lane,
             extra={
                 "workflow": run.get("name"),
                 "run_url": run.get("html_url"),
@@ -356,12 +376,19 @@ async def investigate_failure(payload: dict) -> None:
                 "diff_source": diff_info["source"],
                 "diff_ref": diff_info["ref"],
                 "model": diagnose.MODEL,
-                "posted_url": posted["url"],
+                "posted_url": posted.get("url"),
+                "run_attempt": run_attempt,
+                "category_from_model": final.get("category"),
+                "category_reason": final.get("reason"),
+                "guard_note": final.get("guard_note") or None,
+                "action": final.get("action"),
+                "labels": final.get("labels") or [],
+                "rerun_requested": bool(final.get("rerun_requested")),
             },
         )
-        print(f"  recorded -> postgres diagnoses.id={row_id}")
+        print(f"  recorded -> postgres diagnoses.id={row_id} lane={lane}")
     except Exception as exc:  # noqa: BLE001
-        # The diagnosis is already posted to GitHub at this point, so a
+        # Whatever the lane did has already happened at this point, so a
         # storage failure must not look like a total failure.
         print(f"  ERROR writing to the database: {exc}")
 

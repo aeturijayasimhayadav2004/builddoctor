@@ -1,17 +1,23 @@
-"""GitHub REST API calls that BuildDoctor needs - Phase 1.
+"""GitHub REST API calls that BuildDoctor needs.
 
-Every call here is read-only. The module answers two questions about a
-workflow run that has just failed:
-
+Reads, about a workflow run that has just failed:
   1. Which jobs failed, and what do their logs say?
   2. What code change triggered the run?
 
-Nothing in this file knows about FastAPI or webhooks; it is plain API access
-so it can be tested or reused on its own.
+Writes, once it has an answer:
+  3. Post the diagnosis (PR comment or commit comment).
+  4. Label a pull request.
+  5. Re-run the failed jobs of a run.
+
+Nothing in this file knows about FastAPI, webhooks, or the lane a failure
+was sorted into; it is plain API access so it can be tested or reused on
+its own.
 """
 
 from __future__ import annotations
 
+import asyncio
+import functools
 import os
 
 import httpx
@@ -65,6 +71,64 @@ def _check(response: httpx.Response, what: str) -> None:
         raise GitHubError(f"{what}: HTTP {status} - {response.text[:300]}")
 
 
+# --------------------------------------------------------------------------
+# Network failures
+#
+# httpx raises its own exceptions for DNS failures, refused connections and
+# timeouts. Callers here catch GitHubError, so anything else escapes and
+# kills the whole pipeline - which is how a single flaky DNS lookup once
+# took out an entire diagnosis. These two decorators make sure every
+# network fault arrives as a GitHubError.
+#
+# The split matters. A GET can be repeated safely, so reads retry. A POST
+# cannot: retrying a comment posts it twice, and retrying a re-run starts
+# two of them. Writes are converted but never repeated.
+# --------------------------------------------------------------------------
+
+RETRIES = 2
+RETRY_BACKOFF = 1.5
+
+
+def _reads(fn):
+    """Retry transient network errors. Only for calls that change nothing."""
+
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        delay = 1.0
+        for attempt in range(RETRIES + 1):
+            try:
+                return await fn(*args, **kwargs)
+            except httpx.RequestError as exc:
+                if attempt == RETRIES:
+                    raise GitHubError(
+                        f"{fn.__name__}: network error after "
+                        f"{RETRIES + 1} attempts - {type(exc).__name__}: {exc}"
+                    ) from exc
+                print(
+                    f"       network error in {fn.__name__} "
+                    f"({type(exc).__name__}), retrying in {delay:.1f}s ..."
+                )
+                await asyncio.sleep(delay)
+                delay *= RETRY_BACKOFF
+    return wrapper
+
+
+def _writes(fn):
+    """Convert network errors, but never repeat the call."""
+
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await fn(*args, **kwargs)
+        except httpx.RequestError as exc:
+            raise GitHubError(
+                f"{fn.__name__}: network error - {type(exc).__name__}: {exc}. "
+                f"Not retried, because repeating a write could duplicate it."
+            ) from exc
+    return wrapper
+
+
+@_reads
 async def list_failed_jobs(repo: str, run_id: int) -> list:
     """Return only the jobs of `run_id` whose conclusion was a failure.
 
@@ -84,6 +148,7 @@ async def list_failed_jobs(repo: str, run_id: int) -> list:
     return [job for job in jobs if job.get("conclusion") == "failure"]
 
 
+@_reads
 async def download_job_log(repo: str, job_id: int) -> str:
     """Return the full plain-text log for one job."""
     url = f"{GITHUB_API}/repos/{repo}/actions/jobs/{job_id}/logs"
@@ -105,6 +170,7 @@ async def download_job_log(repo: str, job_id: int) -> str:
     return response.text
 
 
+@_reads
 async def get_pull_request_diff(repo: str, pr_number: int) -> str:
     """Diff of an entire pull request branch against its base branch."""
     url = f"{GITHUB_API}/repos/{repo}/pulls/{pr_number}"
@@ -114,6 +180,7 @@ async def get_pull_request_diff(repo: str, pr_number: int) -> str:
     return response.text
 
 
+@_reads
 async def get_commit_diff(repo: str, sha: str) -> str:
     """Diff of a single commit against its parent.
 
@@ -169,6 +236,7 @@ async def get_diff_for_run(payload: dict) -> dict:
 # --------------------------------------------------------------------------
 
 
+@_writes
 async def post_pull_request_comment(repo: str, pr_number: int, body: str) -> dict:
     """Add a conversation comment to a pull request."""
     url = f"{GITHUB_API}/repos/{repo}/issues/{pr_number}/comments"
@@ -178,6 +246,7 @@ async def post_pull_request_comment(repo: str, pr_number: int, body: str) -> dic
     return response.json()
 
 
+@_writes
 async def post_commit_comment(repo: str, sha: str, body: str) -> dict:
     """Add a comment directly to a commit."""
     url = f"{GITHUB_API}/repos/{repo}/commits/{sha}/comments"
@@ -213,3 +282,51 @@ async def post_diagnosis(payload: dict, body: str) -> dict:
         "ref": head_sha[:7],
         "url": created.get("html_url"),
     }
+
+
+# --------------------------------------------------------------------------
+# Actions the three lanes can take (Phase 4)
+# --------------------------------------------------------------------------
+
+
+def pull_request_number(payload: dict) -> int | None:
+    """The PR this run belongs to, or None for a plain push.
+
+    Same signal used by get_diff_for_run and post_diagnosis, pulled out so
+    the lanes can ask the question without doing anything.
+    """
+    pull_requests = (payload.get("workflow_run") or {}).get("pull_requests") or []
+    return pull_requests[0]["number"] if pull_requests else None
+
+
+@_writes
+async def rerun_failed_jobs(repo: str, run_id: int) -> None:
+    """Re-run only the failed jobs of a run, leaving the green ones alone.
+
+    Needs the Actions permission at Read AND WRITE; read-only returns 403.
+
+    GitHub answers 201 with an empty body, so there is nothing to return -
+    the new attempt appears asynchronously as run_attempt 2 of the same
+    run id, which is exactly the counter the amber lane guards against.
+    """
+    url = f"{GITHUB_API}/repos/{repo}/actions/runs/{run_id}/rerun-failed-jobs"
+    async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
+        response = await client.post(url, headers=_headers())
+    _check(response, f"rerun failed jobs of run {run_id}")
+
+
+@_writes
+async def add_labels(repo: str, issue_number: int, labels: list) -> list:
+    """Add labels to a pull request (a PR is an issue underneath).
+
+    GitHub creates a label that does not exist yet, so there is no need to
+    define it in the repository first. Adding a label that is already
+    present is not an error either, which keeps this safe to repeat.
+    """
+    url = f"{GITHUB_API}/repos/{repo}/issues/{issue_number}/labels"
+    async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
+        response = await client.post(
+            url, headers=_headers(), json={"labels": labels}
+        )
+    _check(response, f"label PR #{issue_number}")
+    return [item.get("name") for item in response.json()]
