@@ -1,0 +1,82 @@
+# Two services on one private network that compose creates for us.
+# On that network each SERVICE NAME is a DNS hostname, which is the whole
+# reason the app can reach the database as "postgres" - see DATABASE_URL
+# below.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      # These three create the role and database on first boot only, i.e.
+      # when the pgdata volume is empty. Changing them later has no effect
+      # unless the volume is deleted.
+      POSTGRES_USER: builddoctor
+      POSTGRES_PASSWORD: builddoctor
+      POSTGRES_DB: builddoctor
+    ports:
+      # host:container. Published so tools on the host can reach it: psql,
+      # a GUI client, and uvicorn when running outside Docker. The app
+      # container does NOT use this - it goes over the private network.
+      #
+      # 5433 on the host, not 5432, because this machine already runs a
+      # native PostgreSQL 18 service on 5432. On Windows both can bind
+      # without an error and connections silently reach the wrong server
+      # ("role builddoctor does not exist"). The container side stays
+      # 5432 - only the host-facing port moves.
+      - "5433:5432"
+    volumes:
+      # A container's own filesystem dies with the container, so without
+      # this every `docker compose down` would wipe the database. A named
+      # volume lives outside any container and survives restarts and
+      # rebuilds. (`docker compose down -v` does delete it.)
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Postgres takes a few seconds to initialise on first boot. Plain
+      # depends_on only waits for the container to START; this is the test
+      # for whether it is actually READY to accept connections.
+      test: ["CMD-SHELL", "pg_isready -U builddoctor -d builddoctor"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  app:
+    build: .
+    env_file:
+      # GITHUB_TOKEN, WEBHOOK_SECRET, GROQ_API_KEY. Injected at runtime, so
+      # they are never baked into an image layer (.dockerignore excludes
+      # .env from the build for exactly this reason).
+      - .env
+    environment:
+      # THE IMPORTANT LINE.
+      #
+      # "postgres" here is the SERVICE NAME above, not a hostname anyone
+      # configured. Compose's DNS resolves it to the database container.
+      #
+      # localhost would NOT work: inside a container localhost means that
+      # container's own loopback, where nothing is listening on 5432. The
+      # symptom is a bare "connection refused" and it looks like the
+      # database is down when it is fine.
+      #
+      # Set here rather than in .env because .env is shared with local
+      # (non-Docker) runs, where the correct host IS localhost. A value in
+      # this block overrides the same key coming from env_file.
+      DATABASE_URL: postgresql+psycopg://builddoctor:builddoctor@postgres:5432/builddoctor
+    ports:
+      # host:container. ngrok on the host still points at localhost:8000
+      # exactly as before, so nothing about the webhook setup changes.
+      - "8000:8000"
+    volumes:
+      # Downloaded CI logs land on the host instead of vanishing with the
+      # container. Not required, but it keeps the Phase 1 behaviour of
+      # being able to open logs/run_<id>.txt in an editor.
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        # Waits for the healthcheck above to pass, not merely for the
+        # container to exist.
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:

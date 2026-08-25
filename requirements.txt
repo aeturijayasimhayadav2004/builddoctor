@@ -13,3 +13,9 @@ python-dotenv>=1.0
 # Grok is OpenAI-compatible, so the openai SDK is pointed at
 # https://api.x.ai/v1 rather than at OpenAI (Phase 2)
 openai>=1.40
+
+# Postgres storage: ORM/engine plus the driver it delegates to.
+# The URL scheme postgresql+psycopg:// selects psycopg 3 specifically.
+# [binary] ships prebuilt wheels, so no C compiler is needed. (Phase 3)
+sqlalchemy>=2.0
+psycopg[binary]>=3.1

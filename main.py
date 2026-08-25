@@ -5,29 +5,33 @@ around the error, plus the change that triggered the run), asks a model what
 went wrong, and posts the answer back where the person who broke it is
 looking.
 
-Every diagnosis is also appended to diagnoses.jsonl so the history is not
-thrown away. That file is a stand-in for real storage, not the real thing.
+Every diagnosis is stored in Postgres (see db.py). Phase 2 appended them
+to diagnoses.jsonl; migrate_jsonl.py backfills that history into the table.
 """
 
+import asyncio
+import contextlib
 import hashlib
 import hmac
 import json
 import os
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.responses import JSONResponse
 
-import diagnose
-import github_client
-from log_excerpt import extract_error_excerpt
-
-# Reads .env into the environment. Called once, at import time, so every
-# os.environ lookup later in the process sees the values.
+# Reads .env into the environment. This has to run BEFORE db is imported:
+# db builds its engine at import time and reads DATABASE_URL right then.
+# (diagnose and github_client read their variables at call time, so they
+# are less fussy - db is not.)
 load_dotenv()
+
+import db  # noqa: E402
+import diagnose  # noqa: E402
+import github_client  # noqa: E402
+from log_excerpt import extract_error_excerpt  # noqa: E402
 
 # Models return typographic characters (curly quotes, arrows) that the default
 # Windows console codepage cannot encode. Without this, those characters come
@@ -36,11 +40,25 @@ for stream in (sys.stdout, sys.stderr):
     if hasattr(stream, "reconfigure"):
         stream.reconfigure(encoding="utf-8", errors="replace")
 
-app = FastAPI(title="BuildDoctor", version="0.3.0")
+@contextlib.asynccontextmanager
+async def lifespan(_app: FastAPI):
+    """Startup work: make sure the database exists and is reachable.
+
+    Under docker compose the app can boot before Postgres is accepting
+    connections, so this waits rather than crashing. create_all() then
+    creates the table on first run and does nothing on every run after.
+    """
+    print(f"  database: {db.database_url()}")
+    await asyncio.to_thread(db.wait_for_database)
+    await asyncio.to_thread(db.init_db)
+    print("  database ready")
+    yield
+
+
+app = FastAPI(title="BuildDoctor", version="0.4.0", lifespan=lifespan)
 
 PROJECT_DIR = Path(__file__).parent
 LOGS_DIR = PROJECT_DIR / "logs"
-DIAGNOSES_FILE = PROJECT_DIR / "diagnoses.jsonl"
 
 CONSOLE_DIFF_MAX_LINES = 200
 
@@ -163,10 +181,32 @@ def build_comment(diagnosis: str, run: dict, job_names: list, excerpt: str) -> s
     )
 
 
-def record_diagnosis(entry: dict) -> None:
-    """Append one JSON object as a line to diagnoses.jsonl."""
-    with DIAGNOSES_FILE.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry, ensure_ascii=False) + "\n")
+async def record_diagnosis(
+    *,
+    run_id: int,
+    repo: str,
+    log_excerpt: str,
+    diff_summary: dict,
+    diagnosis_text: str,
+    posted_target: str | None,
+    extra: dict,
+) -> int:
+    """Store one diagnosis in Postgres. Returns the new row id.
+
+    save_diagnosis is synchronous, so it runs on a worker thread and the
+    event loop stays free to answer the next webhook.
+    """
+    return await asyncio.to_thread(
+        db.save_diagnosis,
+        run_id=run_id,
+        repo=repo,
+        log_excerpt=log_excerpt,
+        diff_summary=diff_summary,
+        diagnosis_text=diagnosis_text,
+        posted_to=db.posted_to_column(posted_target),
+        lane=None,  # Phase 4 populates this.
+        raw=extra,
+    )
 
 
 async def investigate_failure(payload: dict) -> None:
@@ -298,24 +338,31 @@ async def investigate_failure(payload: dict) -> None:
         print(f"  ERROR posting comment: {exc}")
 
     # --- 6. keep the record ---------------------------------------------
-    record_diagnosis(
-        {
-            "run_id": run_id,
-            "repo": repo,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "workflow": run.get("name"),
-            "run_url": run.get("html_url"),
-            "failed_jobs": job_names,
-            "failed_step": first_step,
-            "log_excerpt": combined_excerpt,
-            "diff_source": diff_info["source"],
-            "diff_ref": diff_info["ref"],
-            "diff_summary": summarise_diff(diff_text),
-            "diagnosis": diagnosis,
-            "model": diagnose.MODEL,
-            "posted_to": posted["target"],
-            "posted_url": posted["url"],
-        }
-    )
-    print(f"  recorded -> {DIAGNOSES_FILE.name}")
+    try:
+        row_id = await record_diagnosis(
+            run_id=run_id,
+            repo=repo,
+            log_excerpt=combined_excerpt,
+            diff_summary=summarise_diff(diff_text),
+            diagnosis_text=diagnosis,
+            posted_target=posted["target"],
+            # No column of their own. Kept verbatim in the raw JSONB
+            # column so nothing recorded in Phase 2 is lost.
+            extra={
+                "workflow": run.get("name"),
+                "run_url": run.get("html_url"),
+                "failed_jobs": job_names,
+                "failed_step": first_step,
+                "diff_source": diff_info["source"],
+                "diff_ref": diff_info["ref"],
+                "model": diagnose.MODEL,
+                "posted_url": posted["url"],
+            },
+        )
+        print(f"  recorded -> postgres diagnoses.id={row_id}")
+    except Exception as exc:  # noqa: BLE001
+        # The diagnosis is already posted to GitHub at this point, so a
+        # storage failure must not look like a total failure.
+        print(f"  ERROR writing to the database: {exc}")
+
     print(RULE + "\n", flush=True)
