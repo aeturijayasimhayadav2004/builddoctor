@@ -18,8 +18,13 @@ The three lanes, in the colour language used throughout the project:
                            comment
 
 Why a graph and not an if/elif: the routing becomes data - it can be
-inspected, drawn, and (in Phase 5) each node exposed as its own callable -
-instead of being control flow buried inside one long function.
+inspected, drawn, and each node kept independent - instead of being
+control flow buried inside one long function.
+
+Since Phase 5 the action nodes do not call GitHub themselves. They call
+mcp_client, which speaks MCP over HTTP to a separate server process.
+Failures still arrive as github_client.GitHubError, so the error handling
+in these nodes is unchanged from Phase 4.
 """
 
 from __future__ import annotations
@@ -30,6 +35,7 @@ from langgraph.graph import END, START, StateGraph
 
 import diagnose
 import github_client
+import mcp_client
 
 # The label put on a pull request by the coral lane.
 NEEDS_REVIEW_LABEL = "needs-review"
@@ -111,7 +117,7 @@ def build_comment(state: BuildState, prefix: str = "") -> str:
 async def _post(state: BuildState, prefix: str = "") -> dict:
     """Post the diagnosis where the person who broke the build is looking."""
     try:
-        posted = await github_client.post_diagnosis(
+        posted = await mcp_client.post_diagnosis(
             state["payload"], build_comment(state, prefix)
         )
         print(f"       posted as {posted['target']} comment on {posted['ref']}")
@@ -201,7 +207,7 @@ async def safe_auto_fix(state: BuildState) -> dict:
 
     print("  [amber] safe_auto_fix: re-running the failed jobs")
     try:
-        await github_client.rerun_failed_jobs(state["repo"], state["run_id"])
+        await mcp_client.rerun_failed_jobs(state["repo"], state["run_id"])
         print("       re-run requested; it will appear as run_attempt 2")
         return {"action": "rerun requested", "rerun_requested": True}
     except github_client.GitHubError as exc:
@@ -237,7 +243,7 @@ async def needs_review(state: BuildState) -> dict:
     print(f"  [coral] needs_review: labelling PR #{number} and commenting")
     labels: list = []
     try:
-        labels = await github_client.add_labels(
+        labels = await mcp_client.add_labels(
             state["repo"], number, [NEEDS_REVIEW_LABEL]
         )
         print(f"       labels now: {', '.join(labels)}")

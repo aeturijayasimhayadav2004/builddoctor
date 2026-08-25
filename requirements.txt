@@ -22,3 +22,7 @@ psycopg[binary]>=3.1
 
 # The classify -> route -> act state machine in graph.py (Phase 4)
 langgraph>=0.2
+
+# MCP server (mcp_server.py) and the client graph.py uses to reach it.
+# Note 2.x renamed FastMCP to MCPServer; 1.x code will not run on this.
+mcp>=2.1

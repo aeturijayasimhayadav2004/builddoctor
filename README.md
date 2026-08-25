@@ -2,11 +2,12 @@
 
 An agent that watches a GitHub repo and reacts when a CI build fails.
 
-**Current stage: Phase 4.** When a workflow run fails, BuildDoctor fetches the
+**Current stage: Phase 5.** When a workflow run fails, BuildDoctor fetches the
 logs and the triggering diff, asks a model what went wrong *and which of three
 lanes the failure belongs in*, then acts on that decision - comment, re-run, or
-flag for a human - and stores the whole thing in Postgres. The app and the
-database run together under `docker compose`.
+flag for a human - and stores the whole thing in Postgres. Those actions are
+carried out by a separate **MCP server**, which the app calls as a client.
+Three containers run together under `docker compose`.
 
 ## What it does now
 
@@ -18,7 +19,7 @@ database run together under `docker compose`.
    - cuts each log down to the lines around its `##[error]` markers
    - fetches the change that triggered the run (PR diff, or commit vs parent)
    - asks an LLM to connect the symptom to the cause **and pick a lane**
-   - runs the action for that lane (see below)
+   - runs the action for that lane by calling the MCP server (see below)
    - writes a row to the `diagnoses` table in Postgres, including the lane
 
 ## The three lanes
@@ -85,13 +86,97 @@ get wrong.
 | ---- | ---- |
 | `main.py` | Web routes, signature check, evidence gathering, and recording |
 | `graph.py` | The LangGraph state machine: classify, route, act |
+| `mcp_server.py` | The four GitHub **actions**, exposed as MCP tools. Runs as its own service |
+| `mcp_client.py` | How `graph.py` calls those tools, over HTTP |
 | `github_client.py` | All GitHub API calls (logs, diffs, comments, labels, re-runs) |
 | `log_excerpt.py` | Cuts a raw CI log down to the lines around the error |
 | `diagnose.py` | Asks the LLM for a diagnosis **and** a lane, as structured JSON |
 | `db.py` | The `diagnoses` table, and every line of SQL in the project |
 | `migrate_jsonl.py` | One-time backfill of the old `diagnoses.jsonl` history |
-| `Dockerfile` | Image for the app |
-| `docker-compose.yml` | Runs the app and Postgres together |
+| `Dockerfile` | One image, used by both the app and the MCP server |
+| `docker-compose.yml` | Runs app + mcp + postgres together |
+
+## The MCP server
+
+The three lanes decide *what* should happen. Since Phase 5 they no longer do
+it themselves - they ask a separate service.
+
+**MCP (Model Context Protocol)** is a wire protocol for offering capabilities
+to an AI client. It distinguishes three kinds of thing:
+
+| | |
+| --- | --- |
+| **resources** | things a client **reads**, with no side effects |
+| **tools** | things a client **invokes**, with side effects expected |
+| **prompts** | reusable prompt templates a user picks |
+
+All four of BuildDoctor's actions write to GitHub, so all four are **tools**.
+
+### Why bother
+
+The actions were already four Python functions that worked. Exposing them over
+a protocol buys three things:
+
+- **They are usable by something other than BuildDoctor.** Any MCP client -
+  Claude Code, an IDE, another agent - can connect and use them, without
+  importing this codebase.
+- **The boundary is real.** Previously "post a comment" was a function call
+  that could quietly grow a dependency on the graph's state. Now it is a
+  network call with a declared schema; anything it needs must be an argument.
+- **Capability, not just code.** Only the MCP container holds the token that
+  writes to GitHub. Actions are reachable exactly one way, through a described
+  interface, rather than from anywhere that can `import github_client`.
+
+### The four tools
+
+| Tool | Parameters | Repeatable? |
+| ---- | ---------- | ----------- |
+| `post_pr_comment` | `repo`, `pull_number`, `body` | **No** - each call adds another comment |
+| `post_commit_comment` | `repo`, `commit_sha`, `body` | **No** - each call adds another comment |
+| `add_pr_label` | `repo`, `pull_number`, `label` | **Yes** - re-adding a label is a no-op |
+| `rerun_workflow_job` | `repo`, `run_id` | **No** - each call burns CI minutes |
+
+A tool's **description** is not documentation. It is what an AI client reads
+when deciding whether this is the right call, so each one says what it does,
+when to choose it over its neighbour, and what it costs to get wrong.
+"Repeatable?" is published in the protocol as the `idempotentHint` annotation,
+so a client that never reads this README can still see it.
+
+Only **actions** are exposed. The reads - listing failed jobs, downloading
+logs, fetching the diff - stay as direct calls in `main.py`, because they are
+BuildDoctor's own evidence gathering, not a capability worth offering anyone.
+
+### Where retry lives, after the refactor
+
+Adding a network hop did **not** add a retry layer. There is still exactly
+one, and it is still in `github_client.py`:
+
+| Rule | Where it lives now |
+| ---- | ------------------ |
+| Reads may retry | `@_reads` in `github_client.py`, untouched - reads were never exposed as tools |
+| Writes never retry | `@_writes` in `github_client.py`, **and** `mcp_client.py` makes each call exactly once |
+| A missing job log does not abort the run | `main.py`, untouched - log download never went through MCP |
+| Background failures cannot vanish | `main.py`'s top-level guard, untouched |
+
+The write rule gets *stronger* with the extra hop, for the same reason it
+existed. If an MCP request fails, we cannot tell whether the server performed
+the GitHub write before the connection broke - a failed response and a lost
+response look identical. Retrying would turn one comment into two.
+
+`mcp_client.py` raises `github_client.GitHubError` on any failure, so the
+`except` clauses in `graph.py` are unchanged from Phase 4. The lanes cannot
+tell that the transport moved.
+
+### DNS-rebinding protection
+
+The SDK checks the `Host` header against an allowlist and answers **421
+Misdirected Request** when it does not match. The default allows only
+localhost, which stops a malicious web page resolving a name to `127.0.0.1`
+and driving a local MCP server from someone's browser.
+
+Reaching the server as `mcp:8001` therefore fails until that name is
+allowlisted, which `mcp_server.py` does via `MCP_ALLOWED_HOSTS`. The check
+stays **on** - the fix is naming the hosts actually served, not disabling it.
 
 ## Secrets
 
@@ -138,18 +223,46 @@ below.
 docker compose up --build
 ```
 
-That starts two containers: `postgres` and `app`. Compose waits for
-Postgres's healthcheck to pass before starting the app, and the app creates
-its table on startup. Confirm at <http://127.0.0.1:8000/health>.
+That starts three containers:
+
+| Service | Port | Role |
+| ------- | ---- | ---- |
+| `postgres` | 5433 (host) | stores diagnoses |
+| `mcp` | 8001 | the four GitHub actions, as MCP tools |
+| `app` | 8000 | webhook receiver, evidence gathering, the lane graph |
+
+Compose waits for Postgres's healthcheck before starting the app, and the app
+creates its table on startup. Confirm at <http://127.0.0.1:8000/health>.
+
+`mcp` has no healthcheck: the endpoint speaks JSON-RPC over a session
+handshake, so there is no cheap GET that means "ready". It is not urgent
+either - no tool is called until a build actually fails.
 
 Useful commands:
 
 ```powershell
 docker compose logs -f app       # follow the pipeline output
+docker compose logs -f mcp       # watch tool calls arrive
 docker compose ps                # what is running
 docker compose down              # stop; the database survives
 docker compose down -v           # stop AND DELETE the database
 docker compose up -d --build     # rebuild after a code change
+```
+
+To confirm the app can reach the MCP server and see the four tools exactly as
+a client sees them, save this as `probe.py` and run
+`docker compose exec app python probe.py`:
+
+```python
+import asyncio, os
+from mcp.client.client import Client
+
+async def main():
+    async with Client(os.environ["MCP_SERVER_URL"]) as c:
+        for t in (await c.list_tools()).tools:
+            print(t.name, "idempotent =", t.annotations.idempotent_hint)
+
+asyncio.run(main())
 ```
 
 The code is baked into the image, so a code change needs `--build`. If you
@@ -157,14 +270,21 @@ are iterating quickly, run locally instead (below).
 
 ### `localhost` vs `postgres` - the one thing to get right
 
-| Where the app runs | Host in `DATABASE_URL` | Why |
-| ------------------ | ---------------------- | --- |
-| Inside Docker | `postgres` | the compose **service name**, which compose's internal DNS resolves to the database container |
-| Directly on Windows | `localhost:5433` | reaches the same container through its published port |
+The same rule now applies twice - to Postgres and to the MCP server.
+
+| Where the app runs | `DATABASE_URL` host | `MCP_SERVER_URL` |
+| ------------------ | ------------------- | ---------------- |
+| Inside Docker | `postgres` | `http://mcp:8001/mcp` |
+| Directly on Windows | `localhost:5433` | `http://localhost:8001/mcp` |
 
 Inside a container, `localhost` means *that container's own* loopback
-interface, where nothing is listening on 5432. Using it produces a bare
-`connection refused` that looks like the database is down when it is fine.
+interface, where nothing is listening on 5432 or 8001. Using it produces a
+bare `connection refused` that looks like the other service is down when it is
+fine. The compose **service name** is what its internal DNS resolves to the
+right container.
+
+This is verifiable rather than theoretical - from inside the app container,
+`http://mcp:8001/mcp` lists four tools and `http://localhost:8001/mcp` fails.
 
 ### Why port 5433 on the host
 
@@ -181,13 +301,17 @@ Useful while iterating, since `--reload` picks up code changes instantly.
 Postgres still comes from Docker.
 
 ```powershell
-docker compose up -d postgres            # database only
+docker compose up -d postgres mcp        # dependencies only
 .\.venv\Scripts\Activate.ps1
 uvicorn main:app --reload --port 8000
 ```
 
-With no `DATABASE_URL` in `.env`, `db.py` defaults to `localhost:5433`, which
-is exactly where that container is published.
+With no `DATABASE_URL` or `MCP_SERVER_URL` in `.env`, `db.py` defaults to
+`localhost:5433` and `mcp_client.py` to `http://localhost:8001/mcp` - exactly
+where those two containers are published.
+
+To iterate on the MCP server itself instead, run `docker compose up -d postgres`
+and start it locally with `uvicorn mcp_server:app --reload --port 8001`.
 
 First-time setup, if the virtualenv does not exist yet:
 

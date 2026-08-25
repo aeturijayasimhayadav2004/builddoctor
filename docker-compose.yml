@@ -40,6 +40,25 @@ services:
       retries: 20
     restart: unless-stopped
 
+  mcp:
+    # Same image as the app. Both need the same dependencies and the same
+    # github_client.py, so a second Dockerfile would duplicate the build
+    # for nothing. Only the command differs.
+    build: .
+    command: >
+      uvicorn mcp_server:app --host 0.0.0.0 --port 8001
+    env_file:
+      # The MCP server is the only process that writes to GitHub now, so
+      # it is the one that needs GITHUB_TOKEN. (The app still needs it too,
+      # for the reads that were never exposed as tools.)
+      - .env
+    ports:
+      # Published so the server can be poked from the host with curl or an
+      # MCP inspector. The app container does NOT use this - it goes over
+      # the private compose network.
+      - "8001:8001"
+    restart: unless-stopped
+
   app:
     build: .
     env_file:
@@ -62,6 +81,12 @@ services:
       # (non-Docker) runs, where the correct host IS localhost. A value in
       # this block overrides the same key coming from env_file.
       DATABASE_URL: postgresql+psycopg://builddoctor:builddoctor@postgres:5432/builddoctor
+      # Same lesson as DATABASE_URL, one service along. "mcp" is the
+      # SERVICE NAME above, resolved by compose's DNS to that
+      # container. localhost would mean THIS container's own loopback,
+      # where nothing serves 8001, so every action would fail with
+      # connection refused while the MCP server sat there healthy.
+      MCP_SERVER_URL: http://mcp:8001/mcp
     ports:
       # host:container. ngrok on the host still points at localhost:8000
       # exactly as before, so nothing about the webhook setup changes.
@@ -76,6 +101,12 @@ services:
         # Waits for the healthcheck above to pass, not merely for the
         # container to exist.
         condition: service_healthy
+      mcp:
+        # Start order only. No healthcheck: the MCP endpoint speaks
+        # JSON-RPC over a session handshake, so there is no cheap GET
+        # that means "ready". It is also not urgent - the app does not
+        # call a tool until a build actually fails, minutes later.
+        condition: service_started
     restart: unless-stopped
 
 volumes:
