@@ -1,0 +1,17 @@
+# Virtual environment - rebuild it with: pip install -r requirements.txt
+.venv/
+
+# Python bytecode - regenerated automatically
+__pycache__/
+*.pyc
+
+# Secrets: GitHub token and webhook secret. Never commit this.
+.env
+
+# CI logs downloaded from GitHub at runtime
+logs/
+
+# Recorded diagnoses: contains log excerpts and model output from the
+# watched repository. Runtime data, not source. Replaced by Postgres in
+# Phase 3 but kept until the migration has been run.
+diagnoses.jsonl

@@ -1,0 +1,15 @@
+# BuildDoctor - Phase 2 dependencies
+
+# Web framework + server (Phase 0)
+fastapi>=0.110
+uvicorn>=0.27
+
+# Async HTTP client for calling the GitHub API (Phase 1)
+httpx>=0.27
+
+# Loads secrets from .env (Phase 1)
+python-dotenv>=1.0
+
+# Grok is OpenAI-compatible, so the openai SDK is pointed at
+# https://api.x.ai/v1 rather than at OpenAI (Phase 2)
+openai>=1.40
