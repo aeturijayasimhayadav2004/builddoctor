@@ -41,10 +41,38 @@ MAX_EMBED_CHARS = 2000
 
 # Our own excerpt header, e.g. "--- log lines 167-182 of 189 ---". The line
 # numbers change between two runs of the identical failure, so they are
-# pure noise in a similarity comparison. This is the only normalisation
-# done here, and it is safe because BuildDoctor writes this line itself -
-# it is not evidence from the build.
+# pure noise in a similarity comparison. It is safe to remove because
+# BuildDoctor writes this line itself - it is not evidence from the build.
 _EXCERPT_HEADER = re.compile(r"^--- log lines .*---$", re.MULTILINE)
+
+# LONG RUNS OF VERSION NUMBERS. Added in Phase 8.5, because the eval
+# proved they were crowding out the actual error.
+#
+# When pip is asked for a version that does not exist it helpfully prints
+# EVERY version it does know about. For the rows in this database that
+# list is 1368 characters - and the model below reads at most 256
+# word-pieces, so 81% of such a row was being discarded and a large part
+# of what survived was version numbers rather than the failure.
+#
+# The eval measured what that cost. Two nearly identical failures -
+# `pip install pytest==99X` and `pip install requests==999.999.999`, same
+# file, same fix, one word different - scored 0.6191 against each other.
+# Pasting the long list into the second raised it to 0.9138. Worse, the
+# control: pasting that same list into a COMPLETELY UNRELATED failure
+# moved it +0.27 towards the pip rows. The list was not a tiebreaker; it
+# was a large fraction of the signal.
+#
+# Three or more comma-separated version-like tokens collapse to one
+# marker. Three, not two, because a genuine sentence can mention a pair of
+# versions ("upgrade from 2.1 to 2.2") and that is real content.
+_VERSION = r"\d+(?:\.\d+){1,3}(?:[A-Za-z][A-Za-z0-9.]*)?"
+_VERSION_RUN = re.compile(rf"{_VERSION}(?:\s*,\s*{_VERSION}){{2,}}")
+
+# Deliberately carries NO COUNT. "<47 versions>" and "<52 versions>" would
+# put back exactly the incidental difference this removes - two rows of
+# the same failure would still disagree, just by less. A constant marker
+# makes them identical at that point, which is the whole intent.
+VERSION_LIST_MARKER = "<version list>"
 
 _model = None
 _lock = threading.Lock()
@@ -81,8 +109,16 @@ def warm() -> None:
 
 
 def clean(text: str) -> str:
-    """Trim an excerpt down to the part worth comparing."""
-    return _EXCERPT_HEADER.sub("", text or "").strip()[:MAX_EMBED_CHARS]
+    """Trim an excerpt down to the part worth comparing.
+
+    Order matters. The version lists are collapsed BEFORE the truncation
+    to MAX_EMBED_CHARS, so the cut cannot land in the middle of a list and
+    leave half of it behind - which would be the worst of both worlds:
+    still noisy, and now noisy by a different amount per row.
+    """
+    text = _EXCERPT_HEADER.sub("", text or "")
+    text = _VERSION_RUN.sub(VERSION_LIST_MARKER, text)
+    return text.strip()[:MAX_EMBED_CHARS]
 
 
 @lru_cache(maxsize=16)

@@ -75,6 +75,10 @@ import memory  # noqa: E402
 HERE = pathlib.Path(__file__).resolve().parent
 GOLDEN = HERE / "golden_set.json"
 REPORT = HERE / "report.md"
+# The Phase 8 run, frozen. Every later run is rendered against it so a
+# regression cannot hide inside an improved aggregate.
+BASELINE = HERE / "baseline_phase8.json"
+BASELINE_LABEL = "Phase 8"
 
 LANES = list(diagnose.CATEGORIES)
 
@@ -391,6 +395,60 @@ def memory_verdict(result: dict) -> tuple[str, str]:
 # --------------------------------------------------------------------------
 
 
+def load_baseline() -> dict:
+    """The frozen earlier run, keyed by case id. Empty dict if absent."""
+    if not BASELINE.exists():
+        return {}
+    try:
+        data = json.loads(BASELINE.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return {r["id"]: r for r in data.get("results", [])}
+
+
+def compare(results: list[dict], baseline: dict) -> list[dict]:
+    """Case-by-case diff against the baseline.
+
+    status is the whole point of this function:
+
+      FIXED       was wrong, is now right
+      REGRESSED   was right, is now wrong  <- the one that must not hide
+      still wrong / unchanged              everything else
+
+    A regression is reported as its own line whatever the aggregate did.
+    An accuracy that went up while a previously-correct case broke is not
+    an improvement, it is a trade, and the trade has to be visible.
+    """
+    rows = []
+    for r in results:
+        was = baseline.get(r["id"])
+        if not was:
+            status = "NEW"
+        elif was["correct"] and not r["correct"]:
+            status = "REGRESSED"
+        elif not was["correct"] and r["correct"]:
+            status = "FIXED"
+        elif r["correct"]:
+            status = "ok"
+        else:
+            status = "still wrong"
+        rows.append({
+            "id": r["id"],
+            "group": r["group"],
+            "status": status,
+            "was_lane": (was or {}).get("actual_lane"),
+            "now_lane": r["actual_lane"],
+            "expected": r["expected_lane"],
+            "was_sim": ((was or {}).get("memory") or {}).get("top_similarity"),
+            "now_sim": r["memory"]["top_similarity"],
+            "was_matched": ((was or {}).get("memory") or {}).get("matched"),
+            "now_matched": r["memory"]["matched"],
+            "was_row": ((was or {}).get("memory") or {}).get("top_row_id"),
+            "now_row": r["memory"]["top_row_id"],
+        })
+    return rows
+
+
 def bar(part: int, whole: int, width: int = 18) -> str:
     if not whole:
         return " " * width
@@ -398,10 +456,45 @@ def bar(part: int, whole: int, width: int = 18) -> str:
     return "#" * filled + "." * (width - filled)
 
 
-def render_console(results: list[dict], s: dict, armed: list[str]) -> None:
+def render_console(results: list[dict], s: dict, armed: list[str],
+                   diff: list[dict], base: dict) -> None:
     print("\n" + "=" * 74)
     print("  BUILDDOCTOR PHASE 8 - GOLDEN SET RESULTS")
     print("=" * 74)
+
+    if base:
+        was = f"{base['correct']}/{base['graded']} ({base['accuracy']}%)"
+        now = f"{s['correct']}/{s['graded']} ({s['accuracy']}%)"
+        arrow = "->" if base["accuracy"] != s["accuracy"] else "=="
+        print(f"\n  {BASELINE_LABEL:<9} {was:>18}   {arrow}   now {now}")
+
+        regressed = [d for d in diff if d["status"] == "REGRESSED"]
+        fixed = [d for d in diff if d["status"] == "FIXED"]
+        print(f"\n  FIXED: {len(fixed)}    REGRESSED: {len(regressed)}")
+        for d in fixed:
+            print(f"    FIXED      {d['id']:<9} {d['was_lane']} -> {d['now_lane']}"
+                  f"   (expected {d['expected']})")
+        if regressed:
+            print("\n  !!! REGRESSIONS - these were CORRECT before this change !!!")
+            for d in regressed:
+                print(f"    REGRESSED  {d['id']:<9} {d['was_lane']} -> {d['now_lane']}"
+                      f"   (expected {d['expected']})")
+        else:
+            print("    no case that was previously correct became wrong")
+
+        moved = [d for d in diff
+                 if d["was_sim"] is not None and d["now_sim"] is not None
+                 and abs(d["now_sim"] - d["was_sim"]) >= 0.02]
+        print(f"\n  MEMORY SCORES THAT MOVED BY >= 0.02  ({len(moved)} of {len(diff)})")
+        print(f"    {'case':<9} {'was':>7} {'now':>7} {'delta':>8}   match  nearest row")
+        for d in sorted(moved, key=lambda x: -(x["now_sim"] - x["was_sim"])):
+            flip = ""
+            if d["was_matched"] != d["now_matched"]:
+                flip = "  <- CROSSED THRESHOLD" if d["now_matched"] else "  <- LOST MATCH"
+            print(f"    {d['id']:<9} {d['was_sim']:>7.4f} {d['now_sim']:>7.4f} "
+                  f"{d['now_sim'] - d['was_sim']:>+8.4f}   "
+                  f"{'yes' if d['now_matched'] else 'no':<5}  "
+                  f"{d['was_row']}->{d['now_row']}{flip}")
 
     print(f"\n  OVERALL CLASSIFICATION ACCURACY   {s['correct']}/{s['graded']}"
           f"   ({s['accuracy']}%)")
@@ -488,7 +581,8 @@ def render_console(results: list[dict], s: dict, armed: list[str]) -> None:
     print("  None of them fired, so nothing was posted, labelled, re-run or saved.\n")
 
 
-def render_markdown(results: list[dict], s: dict, armed: list[str], elapsed: float) -> str:
+def render_markdown(results: list[dict], s: dict, armed: list[str],
+                    elapsed: float, diff: list[dict], base: dict) -> str:
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     out: list[str] = []
     w = out.append
@@ -503,6 +597,89 @@ def render_markdown(results: list[dict], s: dict, armed: list[str], elapsed: flo
       "no prompt, no threshold, no guard was changed. A fix without a "
       "before-and-after number is a guess with extra steps.")
     w("")
+
+    if base:
+        w("## Phase 8 vs now")
+        w("")
+        w("The Phase 8 run is frozen in `baseline_phase8.json` and every "
+          "later run is rendered against it. An aggregate that went up is "
+          "not evidence on its own - a regression has to be visible as its "
+          "own line, because an improved percentage can hide a trade.")
+        w("")
+        w(f"| | {BASELINE_LABEL} | Now |")
+        w("| --- | --- | --- |")
+        w(f"| **Accuracy** | {base['correct']}/{base['graded']} "
+          f"({base['accuracy']}%) | **{s['correct']}/{s['graded']} "
+          f"({s['accuracy']}%)** |")
+        w(f"| Excluding ambiguous | {base['clear_correct']}/"
+          f"{base['clear_total']} ({base['clear_accuracy']}%) | "
+          f"{s['clear_correct']}/{s['clear_total']} ({s['clear_accuracy']}%) |")
+        for lane in LANES:
+            b = base["by_lane"].get(lane, {})
+            n = s["by_lane"].get(lane, {})
+            w(f"| `{lane}` | {b.get('correct')}/{b.get('total')} | "
+              f"{n.get('correct')}/{n.get('total')} |")
+        w("")
+
+        regressed = [d for d in diff if d["status"] == "REGRESSED"]
+        fixed = [d for d in diff if d["status"] == "FIXED"]
+        stillwrong = [d for d in diff if d["status"] == "still wrong"]
+
+        if regressed:
+            w("### REGRESSIONS")
+            w("")
+            w(f"**{len(regressed)} case(s) that were correct in "
+              f"{BASELINE_LABEL} are now wrong.**")
+            w("")
+            w("| Case | Expected | Was | Now |")
+            w("| ---- | -------- | --- | --- |")
+            for d in regressed:
+                w(f"| `{d['id']}` | `{d['expected']}` | `{d['was_lane']}` | "
+                  f"**`{d['now_lane']}`** |")
+            w("")
+        else:
+            w("### Regressions")
+            w("")
+            w("**None.** No case that was correct in "
+              f"{BASELINE_LABEL} became wrong.")
+            w("")
+
+        w("### Fixed")
+        w("")
+        if fixed:
+            w("| Case | Expected | Was | Now |")
+            w("| ---- | -------- | --- | --- |")
+            for d in fixed:
+                w(f"| `{d['id']}` | `{d['expected']}` | `{d['was_lane']}` | "
+                  f"**`{d['now_lane']}`** |")
+        else:
+            w("No previously-failing case started passing.")
+        w("")
+        if stillwrong:
+            w("Still wrong: " + ", ".join(f"`{d['id']}`" for d in stillwrong) + ".")
+            w("")
+
+        w("### Every memory score, before and after")
+        w("")
+        w("Changing `embeddings.clean()` can move ANY similarity, not only "
+          "the one it was aimed at, so all 24 are listed rather than the "
+          "interesting ones.")
+        w("")
+        w("| Case | Was | Now | Delta | Matched before | Matched now | Nearest row |")
+        w("| ---- | --- | --- | ----- | -------------- | ----------- | ----------- |")
+        for d in sorted(diff, key=lambda x: -((x["now_sim"] or 0) - (x["was_sim"] or 0))):
+            if d["was_sim"] is None or d["now_sim"] is None:
+                continue
+            delta = d["now_sim"] - d["was_sim"]
+            flip = ""
+            if d["was_matched"] != d["now_matched"]:
+                flip = " **(crossed)**" if d["now_matched"] else " **(lost)**"
+            arrow = (f"{d['was_row']} -> {d['now_row']}"
+                     if d["was_row"] != d["now_row"] else str(d["now_row"]))
+            w(f"| `{d['id']}` | {d['was_sim']:.4f} | {d['now_sim']:.4f} | "
+              f"{delta:+.4f} | {'yes' if d['was_matched'] else 'no'} | "
+              f"{'yes' if d['now_matched'] else 'no'}{flip} | {arrow} |")
+        w("")
 
     w("## Headline")
     w("")
@@ -812,7 +989,18 @@ async def main() -> int:
     results = all_runs[0]
     s = score(results)
 
-    render_console(results, s, armed)
+    baseline = load_baseline()
+    diff = compare(results, baseline)
+    base_scored = {}
+    if BASELINE.exists():
+        try:
+            base_scored = json.loads(
+                BASELINE.read_text(encoding="utf-8")
+            ).get("scored", {})
+        except (json.JSONDecodeError, OSError):
+            base_scored = {}
+
+    render_console(results, s, armed, diff, base_scored)
 
     if args.repeat > 1:
         print("  RUN-TO-RUN VARIANCE")
@@ -823,7 +1011,8 @@ async def main() -> int:
         print("")
 
     REPORT.write_text(
-        render_markdown(results, s, armed, elapsed), encoding="utf-8"
+        render_markdown(results, s, armed, elapsed, diff, base_scored),
+        encoding="utf-8",
     )
     print(f"  report written to {REPORT}")
 

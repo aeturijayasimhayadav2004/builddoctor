@@ -1,68 +1,9 @@
 # BuildDoctor evaluation report
 
-Generated 2026-08-26 17:41 UTC by `eval/run_eval.py` against `eval/golden_set.json`.
-24 cases, 557 seconds, model `openai/gpt-oss-20b` at temperature 0.2.
+Generated 2026-08-26 11:46 UTC by `eval/run_eval.py` against `eval/golden_set.json`.
+24 cases, 556 seconds, model `openai/gpt-oss-20b` at temperature 0.2.
 
 This run **measured** the system. Nothing was tuned in response to it: no prompt, no threshold, no guard was changed. A fix without a before-and-after number is a guess with extra steps.
-
-## Phase 8 vs now
-
-The Phase 8 run is frozen in `baseline_phase8.json` and every later run is rendered against it. An aggregate that went up is not evidence on its own - a regression has to be visible as its own line, because an improved percentage can hide a trade.
-
-| | Phase 8 | Now |
-| --- | --- | --- |
-| **Accuracy** | 22/24 (91.7%) | **22/24 (91.7%)** |
-| Excluding ambiguous | 20/21 (95.2%) | 20/21 (95.2%) |
-| `informational` | 11/12 | 11/12 |
-| `safe_auto_fix` | 3/3 | 2/3 |
-| `needs_review` | 8/9 | 9/9 |
-
-### REGRESSIONS
-
-**2 case(s) that were correct in Phase 8 are now wrong.**
-
-| Case | Expected | Was | Now |
-| ---- | -------- | --- | --- |
-| `hist-02` | `informational` | `informational` | **`needs_review`** |
-| `mid-05` | `safe_auto_fix` | `safe_auto_fix` | **`informational`** |
-
-### Fixed
-
-| Case | Expected | Was | Now |
-| ---- | -------- | --- | --- |
-| `syn-08` | `needs_review` | `informational` | **`needs_review`** |
-| `mid-06` | `informational` | `needs_review` | **`informational`** |
-
-### Every memory score, before and after
-
-Changing `embeddings.clean()` can move ANY similarity, not only the one it was aimed at, so all 24 are listed rather than the interesting ones.
-
-| Case | Was | Now | Delta | Matched before | Matched now | Nearest row |
-| ---- | --- | --- | ----- | -------------- | ----------- | ----------- |
-| `mid-01` | 0.7959 | 0.9600 | +0.1641 | no | yes **(crossed)** | 2 -> 5 |
-| `mid-05` | 0.5687 | 0.6439 | +0.0752 | no | no | 9 |
-| `hist-05` | 0.9999 | 1.0000 | +0.0001 | yes | yes | 12 |
-| `live-03` | 0.9999 | 1.0000 | +0.0001 | yes | yes | 10 |
-| `hist-01` | 1.0000 | 1.0000 | +0.0000 | yes | yes | 3 |
-| `hist-02` | 0.8333 | 0.8333 | +0.0000 | no | no | 13 |
-| `hist-03` | 0.9995 | 0.9995 | +0.0000 | yes | yes | 6 |
-| `hist-06` | 0.8333 | 0.8333 | +0.0000 | no | no | 2 |
-| `syn-01` | 0.8026 | 0.8026 | +0.0000 | no | no | 2 |
-| `syn-02` | 0.5013 | 0.5013 | +0.0000 | no | no | 8 |
-| `syn-03` | 0.8060 | 0.8060 | +0.0000 | no | no | 2 |
-| `syn-04` | 0.7456 | 0.7456 | +0.0000 | no | no | 2 |
-| `syn-05` | 0.7400 | 0.7400 | +0.0000 | no | no | 3 |
-| `syn-06` | 0.6099 | 0.6099 | +0.0000 | no | no | 2 |
-| `syn-07` | 0.5578 | 0.5578 | +0.0000 | no | no | 3 |
-| `syn-08` | 0.6832 | 0.6832 | +0.0000 | no | no | 2 |
-| `mid-02` | 0.9431 | 0.9431 | +0.0000 | yes | yes | 13 |
-| `mid-03` | 0.9763 | 0.9763 | +0.0000 | yes | yes | 4 |
-| `mid-04` | 0.9254 | 0.9254 | +0.0000 | yes | yes | 3 |
-| `mid-06` | 0.7429 | 0.7429 | +0.0000 | no | no | 2 |
-| `live-01` | 0.9997 | 0.9997 | +0.0000 | yes | yes | 6 |
-| `live-04` | 0.8333 | 0.8333 | +0.0000 | no | no | 2 |
-| `hist-04` | 1.0000 | 0.9998 | -0.0002 | yes | yes | 9 |
-| `live-02` | 1.0000 | 0.9998 | -0.0002 | yes | yes | 5 |
 
 ## Headline
 
@@ -76,25 +17,25 @@ Changing `embeddings.clean()` can move ANY similarity, not only the one it was a
 | Lane | Correct | Accuracy |
 | ---- | ------- | -------- |
 | `informational` | 11/12 | 92% |
-| `safe_auto_fix` | 2/3 | 67% |
-| `needs_review` | 9/9 | 100% |
+| `safe_auto_fix` | 3/3 | 100% |
+| `needs_review` | 8/9 | 89% |
 
 ### By group
 
 | Group | Correct | Accuracy | What it tests |
 | ----- | ------- | -------- | ------------- |
-| historical | 5/6 | 83% | Real failures from rows 1-13, verbatim excerpts |
+| historical | 6/6 | 100% | Real failures from rows 1-13, verbatim excerpts |
 | live-crosscheck | 4/4 | 100% | Replays of real runs, vs what the live pipeline stored |
 | middle-zone | 5/6 | 83% | Similar-but-different pairs, to probe the threshold |
-| synthetic | 8/8 | 100% | Written to cover each lane, including 2 ambiguous |
+| synthetic | 7/8 | 88% | Written to cover each lane, including 2 ambiguous |
 
 ### Confusion
 
 | Expected | What came back |
 | -------- | -------------- |
-| `needs_review` | `needs_review` x9 |
+| `needs_review` | `needs_review` x8, `informational` x1 |
 | `informational` | `informational` x11, `needs_review` x1 |
-| `safe_auto_fix` | `safe_auto_fix` x2, `informational` x1 |
+| `safe_auto_fix` | `safe_auto_fix` x3 |
 
 ## The middle zone: 0.83 to 0.99
 
@@ -104,28 +45,28 @@ Six cases were built to land in it: pairs that are deliberately similar-but-diff
 
 | Case | Top similarity | Nearest row | Matched? | I predicted | Verdict |
 | ---- | -------------- | ----------- | -------- | ----------- | ------- |
-| `mid-01` | **0.9600** | 5 | **yes** | should match | AS PREDICTED |
+| `mid-01` | **0.7959** | 2 | no | should match | MISS |
 | `mid-02` | **0.9431** | 13 | **yes** | should match | AS PREDICTED |
 | `mid-03` | **0.9763** | 4 | **yes** | should match | AS PREDICTED |
 | `mid-04` | **0.9254** | 3 | **yes** | should match | AS PREDICTED |
-| `mid-05` | **0.6439** | 9 | no | should not match | AS PREDICTED |
+| `mid-05` | **0.5687** | 9 | no | should not match | AS PREDICTED |
 | `mid-06` | **0.7429** | 2 | no | should not match | AS PREDICTED |
 
 ### Case by case
 
 #### `mid-01` - Same missing-version failure as rows 9-12, different package (requests).
 
-- **Top similarity: 0.9600** against row 5; memory RETURNED it.
-- Next closest: row 9 at 0.9594, row 10 at 0.9497.
+- **Top similarity: 0.7959** against row 2; memory rejected it.
+- Next closest: row 13 at 0.7681, row 9 at 0.6191.
 - I predicted **should match** against rows [9, 10, 11, 12].
-- Verdict: **AS PREDICTED** - matched at 0.9600, and a match was wanted.
+- Verdict: **MISS** - closest was 0.7959, below the 0.90 threshold, but a human would have wanted this hint.
 
   > Identical failure mode, identical fix shape, identical file. Only the package name differs. A past diagnosis of the pytest version would genuinely help here, so a hint would be welcome. GUESS: I expect roughly 0.90-0.97 - high, but below the ~1.00 the true pairs have scored so far, because the package name is a real token difference.
 
 #### `mid-02` - Same apt failure as row 13, different package name.
 
 - **Top similarity: 0.9431** against row 13; memory RETURNED it.
-- Next closest: row 2 at 0.8155, row 5 at 0.7566.
+- Next closest: row 2 at 0.8155, row 1 at 0.5387.
 - I predicted **should match** against rows [13].
 - Verdict: **AS PREDICTED** - matched at 0.9431, and a match was wanted.
 
@@ -151,17 +92,17 @@ Six cases were built to land in it: pairs that are deliberately similar-but-diff
 
 #### `mid-05` - pip fails on the same command as rows 9-12, but from a network timeout rather than a bad version. Opposite cause, opposite lane.
 
-- **Top similarity: 0.6439** against row 9; memory rejected it.
-- Next closest: row 5 at 0.6392, row 12 at 0.6341.
+- **Top similarity: 0.5687** against row 9; memory rejected it.
+- Next closest: row 5 at 0.5687, row 7 at 0.5682.
 - I predicted **should not match** against rows [9, 10, 11, 12].
-- Verdict: **AS PREDICTED** - closest was 0.6439, correctly rejected.
+- Verdict: **AS PREDICTED** - closest was 0.5687, correctly rejected.
 
   > THE DANGEROUS ONE. Same job, same step, same pip command, and a lot of shared vocabulary - ERROR, pip, pytest, Could not install. But the cause is the opposite kind of thing and so is the correct lane: this is amber, those rows are teal. A hint from row 10 would push the model towards 'a version that does not exist', which is not what happened. GUESS: 0.80-0.92, and if it lands above 0.90 the threshold is admitting a match that a human would not want.
 
 #### `mid-06` - Node cannot find a module. Same words as the Python ModuleNotFoundError rows, completely different ecosystem and fix.
 
 - **Top similarity: 0.7429** against row 2; memory rejected it.
-- Next closest: row 13 at 0.6926, row 11 at 0.6587.
+- Next closest: row 13 at 0.6926, row 1 at 0.5615.
 - I predicted **should not match** against rows [4, 6, 7, 8].
 - Verdict: **AS PREDICTED** - closest was 0.7429, correctly rejected.
 
@@ -174,35 +115,56 @@ Including the ones with no memory expectation, because the shape of the whole di
 | Case | Closest | 2nd | 3rd | Nearest row | Above threshold? |
 | ---- | ------- | --- | --- | ----------- | ---------------- |
 | `hist-01` | 1.0000 | 0.8109 | 0.8103 | 3 | yes |
-| `hist-05` | 1.0000 | 0.9845 | 0.9843 | 12 | yes |
-| `live-03` | 1.0000 | 1.0000 | 0.9843 | 10 | yes |
-| `hist-04` | 0.9998 | 0.9843 | 0.9843 | 9 | yes |
-| `live-02` | 0.9998 | 0.9845 | 0.9845 | 5 | yes |
+| `hist-04` | 1.0000 | 0.9938 | 0.9938 | 9 | yes |
+| `live-02` | 1.0000 | 0.9938 | 0.9938 | 5 | yes |
+| `hist-05` | 0.9999 | 0.9938 | 0.9938 | 12 | yes |
+| `live-03` | 0.9999 | 0.9999 | 0.9935 | 10 | yes |
 | `live-01` | 0.9997 | 0.9993 | 0.8095 | 6 | yes |
 | `hist-03` | 0.9995 | 0.9993 | 0.9993 | 6 | yes |
 | `mid-03` | 0.9763 | 0.9760 | 0.9753 | 4 | yes |
-| `mid-01` | 0.9600 | 0.9594 | 0.9497 | 5 | yes |
-| `mid-02` | 0.9431 | 0.8155 | 0.7566 | 13 | yes |
+| `mid-02` | 0.9431 | 0.8155 | 0.5387 | 13 | yes |
 | `mid-04` | 0.9254 | 0.9254 | 0.7696 | 3 | yes |
-| `hist-02` | 0.8333 | 0.8062 | 0.8062 | 13 | no |
-| `hist-06` | 0.8333 | 0.7719 | 0.7710 | 2 | no |
-| `live-04` | 0.8333 | 0.7719 | 0.7710 | 2 | no |
-| `syn-03` | 0.8060 | 0.8003 | 0.7996 | 2 | no |
-| `syn-01` | 0.8026 | 0.7218 | 0.6944 | 2 | no |
-| `syn-04` | 0.7456 | 0.7414 | 0.7414 | 2 | no |
-| `mid-06` | 0.7429 | 0.6926 | 0.6587 | 2 | no |
+| `hist-02` | 0.8333 | 0.6850 | 0.6850 | 13 | no |
+| `hist-06` | 0.8333 | 0.5193 | 0.5193 | 2 | no |
+| `live-04` | 0.8333 | 0.5193 | 0.5193 | 2 | no |
+| `syn-03` | 0.8060 | 0.6791 | 0.6640 | 2 | no |
+| `syn-01` | 0.8026 | 0.7218 | 0.5622 | 2 | no |
+| `mid-01` | 0.7959 | 0.7681 | 0.6191 | 2 | no |
+| `syn-04` | 0.7456 | 0.6912 | 0.5446 | 2 | no |
+| `mid-06` | 0.7429 | 0.6926 | 0.5615 | 2 | no |
 | `syn-05` | 0.7400 | 0.7400 | 0.6986 | 3 | no |
-| `syn-08` | 0.6832 | 0.5986 | 0.5664 | 2 | no |
-| `mid-05` | 0.6439 | 0.6392 | 0.6341 | 9 | no |
-| `syn-06` | 0.6099 | 0.5917 | 0.5530 | 2 | no |
+| `syn-08` | 0.6832 | 0.5986 | 0.4889 | 2 | no |
+| `syn-06` | 0.6099 | 0.5917 | 0.5014 | 2 | no |
+| `mid-05` | 0.5687 | 0.5687 | 0.5682 | 9 | no |
 | `syn-07` | 0.5578 | 0.5578 | 0.5191 | 3 | no |
 | `syn-02` | 0.5013 | 0.5013 | 0.5009 | 8 | no |
 
 ## Every wrong case (2)
 
-### `hist-02` (historical) - **I flagged this one ambiguous**
+### `syn-08` (synthetic) - **I flagged this one ambiguous**
 
-pytest cannot find tests/ at all. The diff only touched ci.yml.
+The workflow token lacks permission to comment on the PR.
+
+| | |
+| --- | --- |
+| Expected | `needs_review` |
+| Actually returned | `informational` |
+
+**The model's own reason:**
+
+> Step 2: the failure is due to a change in the CI workflow file (.github/workflows/ci.yml), which is build/CI machinery.
+
+**Its diagnosis:**
+
+> The workflow removed the permissions block that granted the actions/github-script@v7 write access to pull‑request comments; without pull‑requests: write the script cannot post a comment and fails with a 403. Fix: add a permissions section granting pull‑requests: write (and any other needed scopes).
+
+**Why I expected something else:**
+
+> GENUINELY AMBIGUOUS. STEP 1 names permissions and stops there, which gives needs_review. But the one file to edit is ci.yml, which is exactly what STEP 2 calls machinery - and STEP 2 would give informational. The prompt resolves it by order: STEP 1 runs first and says stop. I expect needs_review, and informational is the reasonable disagreement.
+
+### `mid-06` (middle-zone)
+
+Node cannot find a module. Same words as the Python ModuleNotFoundError rows, completely different ecosystem and fix.
 
 | | |
 | --- | --- |
@@ -211,36 +173,15 @@ pytest cannot find tests/ at all. The diff only touched ci.yml.
 
 **The model's own reason:**
 
-> STEP 4 (source or test code): The failure is caused by a missing tests/ directory, which is part of the source/test code.
+> Step 4: the failure requires editing source code (package.json) to restore a missing dependency.
 
 **Its diagnosis:**
 
-> The test job failed because the command was changed to run pytest on a non‑existent tests/ directory, so no tests were found. The diff added the tests/ path but the repository has no such folder. Fix: remove the tests/ argument or create the tests/ directory with test files.
+> The test fails because the package.json no longer lists the express dependency, so running the built server cannot resolve the 'express' module. The diff removed the "express" entry from dependencies, causing the MODULE_NOT_FOUND error. Fix: Add "express": "^4.19.2" back to the dependencies in package.json.
 
 **Why I expected something else:**
 
-> STEP 2. The change that broke it is in .github/workflows/ci.yml - it started pointing pytest at a directory that does not exist. AMBIGUOUS: a reasonable engineer could say the real fix is to create tests/, which would be source code and STEP 4.
-
-### `mid-05` (middle-zone)
-
-pip fails on the same command as rows 9-12, but from a network timeout rather than a bad version. Opposite cause, opposite lane.
-
-| | |
-| --- | --- |
-| Expected | `safe_auto_fix` |
-| Actually returned | `informational` |
-
-**The model's own reason:**
-
-> STEP 2 (build or dependency machinery): The failure occurs during the pip install step in the CI workflow file .github/workflows/ci.yml, which is build machinery.
-
-**Its diagnosis:**
-
-> The job failed because pip could not resolve pypi.org to download pytest, causing an OSError during the Install deps step. The diff only added the --no-cache-dir flag, which does not explain the network failure. Fix: add a reliable index URL to the pip install command, e.g. `pip install --no-cache-dir --index-url https://pypi.org/simple pytest`.
-
-**Why I expected something else:**
-
-> STEP 3. DNS resolution failure reaching pypi.org. Re-running unchanged is likely to pass, and the diff (adding --no-cache-dir) cannot cause a name-resolution failure.
+> STEP 2. The one file to edit is package.json - the dependency was removed from it. Dependency machinery, not program behaviour.
 
 ## Live cross-check
 

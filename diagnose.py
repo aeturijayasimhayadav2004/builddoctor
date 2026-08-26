@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from openai import AsyncOpenAI
 
@@ -53,28 +53,92 @@ CATEGORIES = (INFORMATIONAL, SAFE_AUTO_FIX, NEEDS_REVIEW)
 # is what makes it the safe default.
 FALLBACK_CATEGORY = INFORMATIONAL
 
-# Handed to the provider as response_format={"type": "json_schema", ...}.
-# With strict=True the provider constrains decoding, so "category" cannot
-# come back as anything but one of the three literals below - that is
-# enforced while the tokens are generated, not checked afterwards.
+# THE SCHEMA IS THE GATE.
 #
-# "diagnosis" is listed FIRST on purpose. Generation is left to right, so
-# the model writes its explanation before it has to commit to a label. It
-# reasons, then categorises, rather than categorising then rationalising.
+# Until Phase 8.5 this asked for one "category" field, and the ordering of
+# STEP 1 to STEP 5 in the prompt was only an instruction. The eval found
+# what that costs: on a workflow failing with "Resource not accessible by
+# integration" after `permissions:` was deleted, STEP 1 says security ->
+# needs_review and STOP, and the model answered "informational" with the
+# reason "Step 2: ... which is build/CI machinery". It was not confused
+# about the facts. It skipped a step, because nothing made it evaluate
+# them in order rather than pattern-match to whichever read most relevant.
+#
+# So the model no longer names a lane at all. It answers the four
+# questions, and the CODE applies the first-match rule.
+#
+# Two things make that stronger than an instruction:
+#
+#   1. Generation is left to right, and constrained decoding emits the
+#      keys in the order declared here. The model must commit to
+#      step_1_security_triggered before step_2 exists as a token to write.
+#      The ordering stops being a request and becomes a property of how
+#      the answer is produced.
+#
+#   2. There is no single field where the wrong lane can be written down.
+#      Whatever the model would have "wanted" to answer, if it marks
+#      step 1 true then derive_category() returns needs_review.
+#
+# The cost is real and worth stating: four extra booleans and four short
+# reasons, roughly 120-200 more output tokens on every diagnosis. Phase 8
+# runs used 154-276 tokens against a 1000 budget, so it fits - but it is
+# more expensive per call, and on a rate-limited tier that is felt.
+#
+# "diagnosis" stays FIRST, for the reason it always was: the model writes
+# its explanation before it has to answer anything categorical, so it
+# reasons and then classifies rather than classifying then rationalising.
 TRIAGE_SCHEMA = {
     "name": "build_failure_triage",
     "strict": True,
     "schema": {
         "type": "object",
+        # Key order here is the evaluation order. Do not reorder these
+        # without understanding that the ordering IS the mechanism.
         "properties": {
             "diagnosis": {"type": "string"},
-            "category": {"type": "string", "enum": list(CATEGORIES)},
-            "reason": {"type": "string"},
+            "step_1_security_triggered": {"type": "boolean"},
+            "step_1_reason": {"type": "string"},
+            "step_2_machinery_triggered": {"type": "boolean"},
+            "step_2_reason": {"type": "string"},
+            "step_3_flaky_triggered": {"type": "boolean"},
+            "step_3_reason": {"type": "string"},
+            "step_4_source_code_triggered": {"type": "boolean"},
+            "step_4_reason": {"type": "string"},
         },
-        "required": ["diagnosis", "category", "reason"],
+        "required": [
+            "diagnosis",
+            "step_1_security_triggered",
+            "step_1_reason",
+            "step_2_machinery_triggered",
+            "step_2_reason",
+            "step_3_flaky_triggered",
+            "step_3_reason",
+            "step_4_source_code_triggered",
+            "step_4_reason",
+        ],
         "additionalProperties": False,
     },
 }
+
+# The first-match rule, as data. Order is STEP 1 to STEP 4; the first one
+# the model marks true decides the lane. STEP 5 - all four false - is the
+# fallthrough at the bottom of derive_category().
+#
+# Note STEP 1 and STEP 4 both land on needs_review. They are kept separate
+# because they are different questions and the eval needs to tell them
+# apart: a security failure reaching the right lane via STEP 4 would look
+# correct in the aggregate while STEP 1 was still being skipped.
+STEP_RULES = (
+    ("step_1_security_triggered", "step_1_reason", NEEDS_REVIEW,
+     "STEP 1 (secrets, credentials, permissions or a security scan)"),
+    ("step_2_machinery_triggered", "step_2_reason", INFORMATIONAL,
+     "STEP 2 (build or dependency machinery)"),
+    ("step_3_flaky_triggered", "step_3_reason", SAFE_AUTO_FIX,
+     "STEP 3 (flaky, infrastructure or timing)"),
+    ("step_4_source_code_triggered", "step_4_reason", NEEDS_REVIEW,
+     "STEP 4 (source or test code)"),
+)
+
 
 SYSTEM_PROMPT = """You are a CI build failure triage assistant.
 
@@ -99,24 +163,54 @@ Connect the two: explain what broke, and why the change caused it.
   instead of inventing a connection between them.
 - Do not speculate about code you were not shown.
 
-JOB 2 - CATEGORISE (the "category" field)
+JOB 2 - EVALUATE EACH STEP (the step_N_* fields)
 
-Work through these steps IN ORDER. Stop at the first one that applies and
-answer with its category.
+There are four questions below. Answer EVERY one of them with true or
+false and a one-line reason, in the order they are written.
+
+You are NOT choosing a category. There is no category field to fill in.
+The rule is "the first step marked true decides the outcome", and that
+rule is applied afterwards, in code, by the program calling you.
+
+So answer each step independently and honestly, on its own merits. You do
+not need to make your answers consistent with each other, and you must not
+work backwards from an outcome you have in mind. If STEP 1 is true, say
+so, even when a later step also looks true - marking a later step true as
+well changes nothing, because the earliest true one wins.
 
 STEP 1. Does the failure involve secrets, credentials, tokens, API keys,
         permissions, or a security or vulnerability scan?
-        YES -> "needs_review". Stop.
+        -> step_1_security_triggered
 
 STEP 2. Name the ONE file a person would edit to fix this. Is that file
-        build or CI machinery: anything under .github/workflows/, a
-        Dockerfile, requirements.txt, setup.py, pyproject.toml, a Makefile,
-        a lockfile, or similar?
-        YES -> "informational". Stop.
+        BUILD OR DEPENDENCY MACHINERY rather than program behaviour?
+
+        Machinery means a file whose job is to declare WHAT TO INSTALL,
+        WHICH VERSIONS to use, or HOW TO BUILD AND RUN - in any language
+        or ecosystem. Judge by that role, not by whether the filename
+        appears below. These are examples, not the whole list:
+
+          CI config     anything under .github/workflows/, .gitlab-ci.yml,
+                        .circleci/config.yml, azure-pipelines.yml
+          Build / image Dockerfile, docker-compose.yml, Makefile
+          Dependencies  requirements.txt, setup.py, pyproject.toml,
+                        package.json, Cargo.toml, go.mod, pom.xml,
+                        build.gradle, composer.json
+          Lockfiles     package-lock.json, yarn.lock, poetry.lock,
+                        Cargo.lock, go.sum, and the equivalent in any
+                        other ecosystem
+
+        -> step_2_machinery_triggered
+
+        A dependency manifest IS machinery even though it sits at the
+        repository root and developers edit it by hand. Declaring a
+        package is not program behaviour. If the fix is to add, remove or
+        correct a dependency entry or a version number, that is STEP 2 and
+        NOT STEP 4 - whatever the language.
+
         This holds however obviously wrong that file is - a pinned version
         that does not exist, a mistyped command, a missing install step, a
-        bad matrix entry. Such a file is machinery, not program behaviour,
-        and STEP 4 never applies to it.
+        bad matrix entry, a package name that is not in the registry.
 
 STEP 3. Is the failure FLAKY: nothing in the diff plausibly explains it,
         and re-running the same code is genuinely likely to pass?
@@ -124,22 +218,26 @@ STEP 3. Is the failure FLAKY: nothing in the diff plausibly explains it,
         host, a step that hung or timed out, "resource temporarily
         unavailable", a runner or infrastructure error, a race condition, a
         test that depends on timing or random values.
-        YES -> "safe_auto_fix". Stop.
+        -> step_3_flaky_triggered
         Do NOT answer yes merely because you cannot see the cause. Answer
         yes only when re-running unchanged is likely to succeed.
 
 STEP 4. Would the fix be an edit to source code or test code: a wrong
         assertion, broken logic, or an import of a module the project is
         supposed to contain but does not?
-        YES -> "needs_review". Stop.
+        -> step_4_source_code_triggered
 
-STEP 5. Otherwise -> "informational".
-        This is also the answer whenever you are unsure. A needless extra
-        comment costs nothing; a wrong automated action costs trust.
+STEP 5. There is no field for this one. If you mark all four of the
+        steps above false, the program treats the failure as
+        "informational" by default. That is also the right outcome
+        whenever you are unsure: a needless extra comment costs nothing,
+        while a wrong automated action costs trust.
 
-JOB 3 - JUSTIFY (the "reason" field)
+JOB 3 - JUSTIFY (the step_N_reason fields)
 
-One sentence naming which rule above you applied and why.
+Each step gets one short sentence saying why you answered true or false.
+Name the specific evidence - the file, the package, the error - rather
+than restating the question.
 
 USING THE PAST FAILURE SECTION
 
@@ -186,8 +284,11 @@ PAST_TEMPLATE = """
 # Appended on the retry, if the first response somehow fails validation.
 RETRY_NUDGE = (
     "Your previous reply was not valid. Reply with a single JSON object and "
-    'nothing else, with exactly these keys: "diagnosis" (string), '
-    '"category" (one of: ' + ", ".join(CATEGORIES) + '), "reason" (string).'
+    "nothing else, with exactly these keys, in this order: "
+    '"diagnosis" (string), then for each of N = 1, 2, 3, 4 a boolean '
+    '"step_N_..._triggered" and a string "step_N_reason". Do not include a '
+    '"category" key - you are not choosing a category, only answering the '
+    "four questions."
 )
 
 
@@ -197,11 +298,20 @@ class DiagnosisError(RuntimeError):
 
 @dataclass
 class Triage:
-    """What the model decided: the explanation, the lane, and the why."""
+    """What the model decided: the explanation, the lane, and the why.
+
+    `category` and `reason` are DERIVED, not answered. The model fills in
+    `steps`; derive_category() turns that into a lane. The three public
+    attributes are unchanged from Phase 4 so nothing downstream - graph.py,
+    main.py, the database - had to change when the schema did.
+    """
 
     diagnosis: str
     category: str
     reason: str
+    # Every step the model answered, so a wrong lane can be traced to the
+    # question that produced it rather than to a single opaque label.
+    steps: dict = field(default_factory=dict)
 
     @property
     def is_fallback(self) -> bool:
@@ -227,7 +337,7 @@ def build_user_prompt(
     The past-failure section is appended LAST, after the evidence. Reading
     order matters: the model meets the log and the diff before it meets
     anyone else's conclusion about them, which is the same reason the
-    schema puts "diagnosis" before "category".
+    schema puts "diagnosis" before the step questions.
     """
     return USER_TEMPLATE.format(
         repo=repo,
@@ -240,12 +350,40 @@ def build_user_prompt(
     )
 
 
+def derive_category(steps: dict) -> tuple[str, str]:
+    """Apply the first-match rule in code. Returns (category, reason).
+
+    This is JOB 2, and the model no longer does it. It answers four
+    independent questions; the ordering of STEP_RULES turns those answers
+    into a lane. Doing it here rather than asking for a label means the
+    ordering cannot be skipped under pressure - which is precisely the
+    failure the Phase 8 eval caught.
+
+    All four false is STEP 5: informational, the lane that only comments.
+    That is also where anything uncertain lands, on the standing rule that
+    a needless comment costs nothing and a wrong action costs trust.
+    """
+    for flag, reason_key, category, label in STEP_RULES:
+        if steps.get(flag) is True:
+            why = (steps.get(reason_key) or "").strip()
+            return category, f"{label}: {why}" if why else label
+    return FALLBACK_CATEGORY, (
+        "STEP 5 (default): none of the four steps applied"
+    )
+
+
 def parse_triage(text: str) -> Triage | None:
     """Turn the model's reply into a Triage, or None if it is unusable.
 
     Belt and braces. strict json_schema should make every one of these
     checks impossible to fail, but "should" is doing a lot of work in a
     sentence about someone else's inference server.
+
+    A MISSING BOOLEAN IS NOT TREATED AS FALSE. If any of the four is
+    absent or not a bool, this returns None so the caller retries. Reading
+    a missing step_1 as false would silently answer the security question
+    "no" on a malformed reply, which is the one direction this whole
+    change exists to prevent.
     """
     if not text:
         return None
@@ -257,12 +395,21 @@ def parse_triage(text: str) -> Triage | None:
         return None
 
     diagnosis = (data.get("diagnosis") or "").strip()
-    category = (data.get("category") or "").strip()
-    reason = (data.get("reason") or "").strip()
-
-    if not diagnosis or category not in CATEGORIES:
+    if not diagnosis:
         return None
-    return Triage(diagnosis=diagnosis, category=category, reason=reason)
+
+    steps: dict = {}
+    for flag, reason_key, _category, _label in STEP_RULES:
+        value = data.get(flag)
+        if not isinstance(value, bool):
+            return None
+        steps[flag] = value
+        steps[reason_key] = (data.get(reason_key) or "").strip()
+
+    category, reason = derive_category(steps)
+    return Triage(
+        diagnosis=diagnosis, category=category, reason=reason, steps=steps
+    )
 
 
 async def _call(client: AsyncOpenAI, messages: list[dict]) -> str:

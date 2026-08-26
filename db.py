@@ -317,6 +317,21 @@ def rows_missing_embeddings() -> list[Diagnosis]:
         return list(session.scalars(stmt))
 
 
+def all_rows_for_embedding() -> list[Diagnosis]:
+    """Every row, for a FULL re-embed.
+
+    Added in Phase 8.5. rows_missing_embeddings() answers "what has never
+    been embedded", which is the right question after a schema change and
+    the wrong one after a CLEANING change: when embeddings.clean() changes,
+    every stored vector is stale even though none of them is NULL.
+
+    Ordered by id so a long run is readable and interruptible in a
+    predictable place.
+    """
+    with Session() as session:
+        return list(session.scalars(select(Diagnosis).order_by(Diagnosis.id)))
+
+
 def set_embedding(row_id: int, vector: list[float]) -> None:
     """Attach a vector to an existing row. Touches nothing else.
 

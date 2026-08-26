@@ -5,9 +5,21 @@ they arrive with embedding = NULL and are invisible to memory. Without
 this, BuildDoctor would only ever remember failures from today onwards and
 the whole demo history would be missing from its memory.
 
-Safe to run repeatedly. It selects only rows WHERE embedding IS NULL, so a
-second run finds nothing and does nothing. Same idempotency rule as
-migrate_jsonl.py in Phase 3.
+Safe to run repeatedly. By default it selects only rows WHERE embedding IS
+NULL, so a second run finds nothing and does nothing. Same idempotency
+rule as migrate_jsonl.py in Phase 3.
+
+    --all  RE-EMBED EVERY ROW, including rows that already have a vector.
+
+Needed whenever embeddings.clean() changes, which Phase 8.5 did. A vector
+computed from differently-cleaned text is STALE even though it is not
+NULL, and a table holding a mixture of old and new vectors produces
+similarity scores that mean nothing - every row has to be computed the
+same way, or none of them can be compared.
+
+--all OVERWRITES existing data. It is recoverable, because the log
+excerpts it reads from are never touched and it can simply be run again -
+but it is not a no-op, which is why it is not the default.
 
 Narrow on purpose: it reads `id` and `log_excerpt`, and writes `embedding`.
 Nothing else is looked at, which is why row 10 - whose posted_url is NULL
@@ -36,12 +48,29 @@ def main() -> int:
     db.wait_for_database()
     db.init_db()
 
-    rows = db.rows_missing_embeddings()
-    if not rows:
-        print("Nothing to backfill - every row already has an embedding.")
-        return 0
+    full = "--all" in sys.argv
 
-    print(f"Backfilling {len(rows)} row(s) with no embedding.\n")
+    if full:
+        rows = db.all_rows_for_embedding()
+        if not rows:
+            print("The table is empty - nothing to embed.")
+            return 0
+        already = sum(1 for r in rows if r.embedding is not None)
+        print(
+            f"FULL RE-EMBED: {len(rows)} row(s), of which {already} already "
+            f"have a vector that will be OVERWRITTEN.\n"
+        )
+    else:
+        rows = db.rows_missing_embeddings()
+        if not rows:
+            print(
+                "Nothing to backfill - every row already has an embedding.\n"
+                "If embeddings.clean() has changed, those vectors are stale "
+                "rather than missing; re-run with --all."
+            )
+            return 0
+        print(f"Backfilling {len(rows)} row(s) with no embedding.\n")
+
     embeddings.warm()
 
     done = 0

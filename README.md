@@ -2,7 +2,7 @@
 
 An agent that watches a GitHub repo and reacts when a CI build fails.
 
-**Current stage: Phase 8.** When a workflow run fails, BuildDoctor fetches the
+**Current stage: Phase 8.5.** When a workflow run fails, BuildDoctor fetches the
 logs and the triggering diff, **checks whether anything like this has failed
 before**, asks a model what went wrong *and which of three lanes the failure
 belongs in*, then acts on that decision - comment, re-run, or flag for a
@@ -14,6 +14,13 @@ together under `docker compose`.
 And it is now **measured** rather than asserted: against a golden set of 24
 failures with known-correct answers, it picks the right lane **22 times out of
 24 (91.7%)**. See [the eval suite](#does-it-actually-work-the-eval-suite).
+
+Phase 8 found three real defects and deliberately fixed none of them, so the
+numbers would not be contaminated by guessing. Phase 8.5 fixed exactly those
+three and re-ran the whole set. Two cases were fixed, **two regressed**, and the
+total stayed at 22/24 - which is precisely why the eval reports a per-case diff
+and not a percentage. The details are in
+[`eval/findings.md`](eval/findings.md).
 
 ## What it does now
 
@@ -118,6 +125,8 @@ get wrong.
 | `eval/run_eval.py` | Runs the golden set against the real classifier. Writes nothing |
 | `eval/report.md` | The numbers from the last run. Regenerated every run |
 | `eval/findings.md` | What the numbers mean. Written by hand, survives a re-run |
+| `eval/baseline_phase8.json` | The Phase 8 run, frozen. Every later run is diffed against it |
+| `eval/report_phase8.md` | The Phase 8 report, kept for comparison |
 | `eval/probe_*.py` | Two read-only probes, kept as evidence for a Phase 8 finding |
 
 ## Memory: has this failed before?
@@ -201,13 +210,17 @@ in its middle.
 and three of them landed in the empty band. All three should have matched, and
 all three did.
 
-| Case | Score | Should match? | Did it? |
-| ---- | ----- | ------------- | ------- |
-| assertion failure, different file and numbers | 0.9254 | yes | yes |
-| apt missing package, different package name | 0.9431 | yes | yes |
-| `ModuleNotFoundError`, different module | 0.9763 | yes | yes |
-| Node `Cannot find module` vs Python `No module named` | 0.7429 | **no** | no |
-| pip DNS failure vs pip bad-version rows | 0.5687 | **no** | no |
+| Case | Phase 8 | Phase 8.5 | Should match? | Correct now? |
+| ---- | ------- | --------- | ------------- | ------------ |
+| assertion failure, different file and numbers | 0.9254 | 0.9254 | yes | yes |
+| apt missing package, different package name | 0.9431 | 0.9431 | yes | yes |
+| `ModuleNotFoundError`, different module | 0.9763 | 0.9763 | yes | yes |
+| same bad pin, different package | **0.7959** | **0.9600** | yes | **yes, fixed** |
+| Node `Cannot find module` vs Python `No module named` | 0.7429 | 0.7429 | **no** | yes |
+| pip DNS failure vs pip bad-version rows | 0.5687 | 0.6439 | **no** | yes |
+
+**Phase 8.5 made this 6 for 6.** The one miss is described below; it turned out
+not to be the threshold's fault.
 
 The numbers that matter:
 
@@ -223,10 +236,12 @@ inside it rather than balanced on an edge.
 **The threshold was not changed.** It did not need to be, and Phase 8's rule
 was to measure, not tune.
 
-### The thing the eval found instead
+### The thing the eval found instead - since fixed
 
 One middle-zone case failed, and chasing it turned up something more important
-than the threshold.
+than the threshold. **Phase 8 found this and deliberately left it alone; Phase
+8.5 fixed it.** The description below is what was wrong, followed by what
+changed.
 
 `pip install requests==999.999.999` scored only **0.7959** against the rows for
 `pip install pytest==99X.X.X` - the same failure, same file, same fix, only the
@@ -243,11 +258,32 @@ Pasting that same list of version numbers into a completely unrelated failure
 moves it **+0.27 closer** to those rows. Memory is partly matching on
 incidental output volume rather than on the failure.
 
-This is written up in full, with the two probe scripts that prove it, in
-[`eval/findings.md`](eval/findings.md). **It was not fixed** - every candidate
-fix changes `embeddings.clean()`, which changes every stored vector and
-requires a full re-embed and a re-measure. That is a later phase, and the
-golden set now exists to measure it against.
+**The fix, in Phase 8.5.** `embeddings.clean()` now collapses any run of three
+or more comma-separated version-like tokens to a single constant marker, before
+the truncation rather than after it. Three and not two, because a real sentence
+can mention a pair of versions. The marker carries **no count** on purpose:
+`<47 versions>` versus `<52 versions>` would put back exactly the incidental
+difference being removed.
+
+What the embedder sees for row 9:
+
+| | Before | After |
+| --- | --- | --- |
+| After `clean()` | 2000 chars (truncated) | **1440** |
+| Tokens | 1354 | **524** |
+| Discarded by the 256-token window | **1098 (81%)** | 268 (51%) |
+| Is `No matching distribution found` inside the window? | **NO** | **YES** |
+
+Every stored vector was stale the moment that changed, so all 13 rows were
+re-embedded with `backfill_embeddings.py --all`. The offending case went from
+0.7959 to **0.9600**, and its nearest neighbour moved from an unrelated
+"tests/ not found" row to an actual pytest version pin - matching the right
+cluster for the right reason.
+
+The change was surgical, which was not guaranteed: of all 24 scores, 20 moved
+by exactly 0.0000, two by 0.0002, and **no case lost a match**. Written up with
+the probe scripts that prove both halves in
+[`eval/findings.md`](eval/findings.md).
 
 ### How the hint reaches the model
 
@@ -332,6 +368,20 @@ second run finds nothing. It reads `id` and `log_excerpt` and writes
 `posted_url` is NULL because of the Phase 5 structured-output bug - backfills
 exactly like every other row. That NULL is a record of a bug in a different
 column and has nothing to do with what the log said.
+
+**When `embeddings.clean()` changes, every stored vector is stale even though
+none of them is NULL**, and the default mode will report "nothing to backfill"
+while the table quietly holds a mixture of old and new vectors whose similarity
+scores mean nothing. That is what `--all` is for:
+
+```powershell
+docker compose exec app python backfill_embeddings.py --all
+```
+
+It **overwrites** existing vectors, so it is not the default. It is recoverable
+- the log excerpts it reads from are never touched, so it can simply be run
+again - but it is not a no-op. Phase 8.5 changed the cleaning and re-embedded
+all 13 rows this way.
 
 ## The dashboard
 
@@ -521,19 +571,32 @@ Takes about ten minutes, and that is a floor rather than slowness - see
 [`eval/report.md`](eval/report.md); the analysis lives in
 [`eval/findings.md`](eval/findings.md).
 
-| Breakdown | Score |
-| --------- | ----- |
-| Overall | 22/24 (91.7%) |
-| Excluding 3 ambiguous cases | 20/21 (95.2%) |
-| `informational` (teal) | 11/12 |
-| `safe_auto_fix` (amber) | **3/3** |
-| `needs_review` (coral) | 8/9 |
-| Live cross-check | **4/4 agree** with what the live pipeline recorded |
+| Breakdown | Phase 8 | Phase 8.5 |
+| --------- | ------- | --------- |
+| Overall | 22/24 (91.7%) | **22/24 (91.7%)** |
+| Excluding 3 ambiguous cases | 20/21 (95.2%) | 20/21 (95.2%) |
+| `informational` (teal) | 11/12 | 11/12 |
+| `safe_auto_fix` (amber) | 3/3 | **2/3** |
+| `needs_review` (coral) | 8/9 | **9/9** |
+| Middle zone | 5/6 | **6/6** |
+| Live cross-check | 4/4 | **4/4 agree** with what the live pipeline recorded |
 
-The amber row is the one worth pausing on. The database contains **zero**
-examples of `safe_auto_fix` - no watched build has ever failed in a way the
-model judged flaky - so before this eval that lane had never been exercised at
-all. It is now three for three on written cases.
+**The identical total hides four changes**, which is the single most useful
+thing this suite has done. Phase 8.5 fixed two cases (`syn-08`, `mid-06`) and
+broke two (`hist-02`, `mid-05`). A percentage cannot show a trade, so the runner
+renders a per-case diff against a frozen `baseline_phase8.json` and prints
+regressions as their own line whatever the aggregate did.
+
+The amber row is the one worth pausing on, in both directions. The database
+contains **zero** examples of `safe_auto_fix` - no watched build has ever failed
+in a way the model judged flaky - so this lane is the least observed in
+production and the most dependent on written cases. It went 3/3 to 2/3, and the
+cause is understood: enforcing step order in Phase 8.5 revealed that **STEP 2
+(machinery) is asked before STEP 3 (flaky)**, so a transient failure in a run
+that touched `ci.yml` is caught by the machinery question first. That is a
+pre-existing ordering defect the fix exposed rather than created, and it is
+[written up rather than patched](eval/findings.md) - the golden set has exactly
+one amber case with a machinery diff, which is too thin to tune against.
 
 ### The golden set
 
@@ -1002,9 +1065,27 @@ and explanation, not multi-step reasoning, so a small model suits it.
 
 The classification comes back as JSON constrained by a schema, sent as
 `response_format={"type": "json_schema", ...}` with `strict: true`. The
-provider restricts decoding to tokens the schema allows, so `category` cannot
-be anything but one of the three lanes - that is enforced *while the tokens
-are generated*, not checked afterwards.
+provider restricts decoding to tokens the schema allows - enforced *while the
+tokens are generated*, not checked afterwards.
+
+**Since Phase 8.5 the model does not name a lane at all.** It answers the four
+triage steps as booleans with one-line reasons, and `derive_category()` applies
+the first-match rule in code. The eval had caught the model skipping STEP 1
+(security) and answering from STEP 2 on a permissions failure - the steps were
+ordered in the prose and nothing forced them to be *evaluated* in order.
+
+Two things make the schema stronger than the instruction was. Generation is
+left to right and constrained decoding emits keys in the declared order, so the
+model has to commit to `step_1_security_triggered` before `step_2` exists as a
+token to write; the ordering becomes a property of how the answer is produced
+rather than a request. And there is no single field where a wrong lane can be
+written down.
+
+It costs roughly 120-200 extra output tokens per diagnosis. `parse_triage`
+returns `None` - forcing the retry below - if any of the four booleans is
+missing or is not a boolean; a missing `step_1` is never read as false, because
+accidentally answering the security question "no" is the one direction the
+change exists to prevent.
 
 Plain JSON mode (`{"type": "json_object"}`) was tried and rejected: it
 guarantees the reply parses, but not that it has your keys. Asked for this

@@ -1,0 +1,1266 @@
+{
+  "scored": {
+    "total": 24,
+    "graded": 24,
+    "errored": 0,
+    "correct": 22,
+    "accuracy": 91.7,
+    "clear_total": 21,
+    "clear_correct": 20,
+    "clear_accuracy": 95.2,
+    "by_lane": {
+      "informational": {
+        "total": 12,
+        "correct": 11
+      },
+      "safe_auto_fix": {
+        "total": 3,
+        "correct": 3
+      },
+      "needs_review": {
+        "total": 9,
+        "correct": 8
+      }
+    },
+    "by_group": {
+      "historical": {
+        "total": 6,
+        "correct": 6
+      },
+      "live-crosscheck": {
+        "total": 4,
+        "correct": 4
+      },
+      "middle-zone": {
+        "total": 6,
+        "correct": 5
+      },
+      "synthetic": {
+        "total": 8,
+        "correct": 7
+      }
+    },
+    "confusion": {
+      "needs_review": {
+        "needs_review": 8,
+        "informational": 1
+      },
+      "informational": {
+        "informational": 11,
+        "needs_review": 1
+      },
+      "safe_auto_fix": {
+        "safe_auto_fix": 3
+      }
+    }
+  },
+  "results": [
+    {
+      "id": "hist-01",
+      "group": "historical",
+      "description": "A test asserts 1 + 1 == 3. The diff added that test.",
+      "ambiguous": false,
+      "source_row": 1,
+      "recorded_lane": null,
+      "expected_lane": "needs_review",
+      "lane_rationale": "STEP 4. The one file to edit is tests/test_math.py, which is test code, and the assertion itself is wrong. Not machinery, not flaky.",
+      "expected_memory": null,
+      "actual_lane": "needs_review",
+      "actual_category": "needs_review",
+      "guard_note": "",
+      "model_reason": "Rule 4: the failure requires editing source code (the test file) to correct a wrong assertion.",
+      "diagnosis": "The test `tests/test_math.py` was modified to add a new test that asserts `1 + 1 == 3`, which is incorrect. This change caused the test suite to fail because the assertion does not match the actual result of the addition operation. Fix: Change the assertion to `assert 1 + 1 == 2`.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": 32849337397,
+        "neighbours": [
+          {
+            "row_id": 3,
+            "run_id": 32850819521,
+            "lane": null,
+            "similarity": 1.0
+          },
+          {
+            "row_id": 4,
+            "run_id": 32867842998,
+            "lane": null,
+            "similarity": 0.8109
+          },
+          {
+            "row_id": 6,
+            "run_id": 32871619454,
+            "lane": "needs_review",
+            "similarity": 0.8103
+          }
+        ],
+        "top_similarity": 1.0,
+        "top_row_id": 3,
+        "matched": true,
+        "matched_row_id": 3,
+        "matched_similarity": 1.0,
+        "past_summary": "Date: 2026-08-25\nRepository: aeturijayasimhayadav2004/buildDocterRepo1\nWorkflow run: 32850819521\nHow it was handled: unrecorded\nSimilarity to the current failure: 1.00\nWhat was concluded then:\nThe test `tests/test_math.py` was added with an assertion that `1 + 1 == 3`, which is incorrect and caused the test to fail. The failure is due to the new test file containing a wrong expectation.  \nFix: Change the assertion to `assert 1 + 1 == 2`."
+      },
+      "seconds": 172.25
+    },
+    {
+      "id": "hist-02",
+      "group": "historical",
+      "description": "pytest cannot find tests/ at all. The diff only touched ci.yml.",
+      "ambiguous": true,
+      "source_row": 2,
+      "recorded_lane": null,
+      "expected_lane": "informational",
+      "lane_rationale": "STEP 2. The change that broke it is in .github/workflows/ci.yml - it started pointing pytest at a directory that does not exist. AMBIGUOUS: a reasonable engineer could say the real fix is to create tests/, which would be source code and STEP 4.",
+      "expected_memory": null,
+      "actual_lane": "informational",
+      "actual_category": "informational",
+      "guard_note": "",
+      "model_reason": "Step 2: the failure is caused by a change to the CI workflow file (.github/workflows/ci.yml), which is build/CI machinery.",
+      "diagnosis": "The test job failed because the workflow was changed to run \"pytest tests/ -v\", but the repository has no tests/ directory, so pytest reports \"file or directory not found: tests/\". Fix: create a tests/ directory (or remove the explicit path and let pytest discover tests).",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": 32850254347,
+        "neighbours": [
+          {
+            "row_id": 13,
+            "run_id": 32938102258,
+            "lane": "informational",
+            "similarity": 0.8333
+          },
+          {
+            "row_id": 1,
+            "run_id": 32849337397,
+            "lane": null,
+            "similarity": 0.685
+          },
+          {
+            "row_id": 3,
+            "run_id": 32850819521,
+            "lane": null,
+            "similarity": 0.685
+          }
+        ],
+        "top_similarity": 0.8333,
+        "top_row_id": 13,
+        "matched": false,
+        "matched_row_id": null,
+        "matched_similarity": null,
+        "past_summary": ""
+      },
+      "seconds": 123.85
+    },
+    {
+      "id": "hist-03",
+      "group": "historical",
+      "description": "A new test imports app.settings; the repo has no app package.",
+      "ambiguous": false,
+      "source_row": 4,
+      "recorded_lane": null,
+      "expected_lane": "needs_review",
+      "lane_rationale": "STEP 4, which names this case explicitly: an import of a module the project is supposed to contain but does not.",
+      "expected_memory": null,
+      "actual_lane": "needs_review",
+      "actual_category": "needs_review",
+      "guard_note": "",
+      "model_reason": "Rule 4: the failure requires editing source code (adding the missing app package).",
+      "diagnosis": "The test imports `app.settings`, but the repository has no `app` package, so pytest raises `ModuleNotFoundError`. The diff only added a test and does not provide the missing module. Fix: create an `app` package with a `settings.py` that defines `DEBUG = False`.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": 32867842998,
+        "neighbours": [
+          {
+            "row_id": 6,
+            "run_id": 32871619454,
+            "lane": "needs_review",
+            "similarity": 0.9995
+          },
+          {
+            "row_id": 7,
+            "run_id": 32872512711,
+            "lane": "needs_review",
+            "similarity": 0.9993
+          },
+          {
+            "row_id": 8,
+            "run_id": 32872512711,
+            "lane": "needs_review",
+            "similarity": 0.9993
+          }
+        ],
+        "top_similarity": 0.9995,
+        "top_row_id": 6,
+        "matched": true,
+        "matched_row_id": 6,
+        "matched_similarity": 0.9995,
+        "past_summary": "Date: 2026-08-25\nRepository: aeturijayasimhayadav2004/buildDocterRepo1\nWorkflow run: 32871619454\nHow it was handled: needs_review\nSimilarity to the current failure: 1.00\nWhat was concluded then:\nThe tests import the module 'app', but the repository does not install or expose that package during the CI run, so pytest fails with ModuleNotFoundError. The diff only changed the pytest version and does not address the missing module."
+      },
+      "seconds": 51.94
+    },
+    {
+      "id": "hist-04",
+      "group": "historical",
+      "description": "ci.yml pins pytest==999.999.999, which does not exist.",
+      "ambiguous": false,
+      "source_row": 5,
+      "recorded_lane": "needs_review",
+      "expected_lane": "informational",
+      "lane_rationale": "STEP 2, and the step spells this exact case out: 'a pinned version that does not exist' in CI machinery is informational however obviously wrong it is. NOTE: the database recorded needs_review for this row, which is the disagreement this case exists to expose.",
+      "expected_memory": null,
+      "actual_lane": "informational",
+      "actual_category": "informational",
+      "guard_note": "",
+      "model_reason": "Step 2: the failing file is a CI workflow under .github/workflows/, so the category is informational.",
+      "diagnosis": "The test job failed because the workflow installed an impossible pytest version (999.999.999). The diff added this pin, causing pip to error with \"No matching distribution found\". Fix: change the pip install line to use a valid pytest version or remove the pin.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": 32871387114,
+        "neighbours": [
+          {
+            "row_id": 9,
+            "run_id": 32875124103,
+            "lane": "informational",
+            "similarity": 1.0
+          },
+          {
+            "row_id": 10,
+            "run_id": 32879223025,
+            "lane": "informational",
+            "similarity": 0.9938
+          },
+          {
+            "row_id": 11,
+            "run_id": 32879223025,
+            "lane": "informational",
+            "similarity": 0.9938
+          }
+        ],
+        "top_similarity": 1.0,
+        "top_row_id": 9,
+        "matched": true,
+        "matched_row_id": 9,
+        "matched_similarity": 1.0,
+        "past_summary": "Date: 2026-08-25\nRepository: aeturijayasimhayadav2004/buildDocterRepo1\nWorkflow run: 32875124103\nHow it was handled: informational\nSimilarity to the current failure: 1.00\nWhat was concluded then:\nThe workflow pip install command requested a non\u2011existent pytest version (999.999.999), causing pip to fail with \"No matching distribution found\". This broke the test job. Fix: change the pip install line to use a valid pytest version or remove the pin."
+      },
+      "seconds": 292.42
+    },
+    {
+      "id": "hist-05",
+      "group": "historical",
+      "description": "ci.yml pins pytest==998.998.998. Same class as hist-04.",
+      "ambiguous": false,
+      "source_row": 10,
+      "recorded_lane": "informational",
+      "expected_lane": "informational",
+      "lane_rationale": "STEP 2. Identical reasoning to hist-04, and history agrees here.",
+      "expected_memory": null,
+      "actual_lane": "informational",
+      "actual_category": "informational",
+      "guard_note": "",
+      "model_reason": "Step 2: the file .github/workflows/ci.yml is CI machinery, so the failure is informational.",
+      "diagnosis": "The job failed because the workflow tried to install a non\u2011existent pytest version (998.998.998). The pip install line in .github/workflows/ci.yml is the culprit. Fix: change the pip install line to a valid pytest version or remove the pin.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": 32879223025,
+        "neighbours": [
+          {
+            "row_id": 12,
+            "run_id": 32936360508,
+            "lane": "informational",
+            "similarity": 0.9999
+          },
+          {
+            "row_id": 9,
+            "run_id": 32875124103,
+            "lane": "informational",
+            "similarity": 0.9938
+          },
+          {
+            "row_id": 5,
+            "run_id": 32871387114,
+            "lane": "needs_review",
+            "similarity": 0.9938
+          }
+        ],
+        "top_similarity": 0.9999,
+        "top_row_id": 12,
+        "matched": true,
+        "matched_row_id": 12,
+        "matched_similarity": 0.9999,
+        "past_summary": "Date: 2026-08-26\nRepository: aeturijayasimhayadav2004/buildDocterRepo1\nWorkflow run: 32936360508\nHow it was handled: informational\nSimilarity to the current failure: 1.00\nWhat was concluded then:\nThe workflow fails because it tries to pip install a non\u2011existent pytest version (998.998.997). The pip install line in .github/workflows/ci.yml is the culprit. Fix: change the pip install line to a valid pytest version or remove the pin."
+      },
+      "seconds": 147.67
+    },
+    {
+      "id": "hist-06",
+      "group": "historical",
+      "description": "apt-get cannot locate libgdal-does-not-exist, added by ci.yml.",
+      "ambiguous": false,
+      "source_row": 13,
+      "recorded_lane": "informational",
+      "expected_lane": "informational",
+      "lane_rationale": "STEP 2. A workflow file installing a package that does not exist.",
+      "expected_memory": null,
+      "actual_lane": "informational",
+      "actual_category": "informational",
+      "guard_note": "",
+      "model_reason": "Step 2: the failure is due to a change in the CI workflow file, which is build/CI machinery.",
+      "diagnosis": "The workflow added a step to install a non\u2011existent package, libgdal-does-not-exist, causing apt\u2011get to fail. Remove or replace the package name with a valid one.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": 32938102258,
+        "neighbours": [
+          {
+            "row_id": 2,
+            "run_id": 32850254347,
+            "lane": null,
+            "similarity": 0.8333
+          },
+          {
+            "row_id": 1,
+            "run_id": 32849337397,
+            "lane": null,
+            "similarity": 0.5193
+          },
+          {
+            "row_id": 3,
+            "run_id": 32850819521,
+            "lane": null,
+            "similarity": 0.5193
+          }
+        ],
+        "top_similarity": 0.8333,
+        "top_row_id": 2,
+        "matched": false,
+        "matched_row_id": null,
+        "matched_similarity": null,
+        "past_summary": ""
+      },
+      "seconds": 28.2
+    },
+    {
+      "id": "syn-01",
+      "group": "synthetic",
+      "description": "A secret scanner finds a hardcoded AWS key in the diff.",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_lane": "needs_review",
+      "lane_rationale": "STEP 1. Credentials. Stops at the first step, before anything else is considered.",
+      "expected_memory": null,
+      "actual_lane": "needs_review",
+      "actual_category": "needs_review",
+      "guard_note": "",
+      "model_reason": "STEP 1: the failure involves secrets, so the category is needs_review.",
+      "diagnosis": "The test job failed because gitleaks detected a hard\u2011coded AWS access key and secret in src/uploader.py (line 14) that was added by the recent change. This is a secret leak, so the workflow exits with error code 1. Fix: Remove the hard\u2011coded credentials and load them from environment variables or a secure secrets manager.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": null,
+        "neighbours": [
+          {
+            "row_id": 2,
+            "run_id": 32850254347,
+            "lane": null,
+            "similarity": 0.8026
+          },
+          {
+            "row_id": 13,
+            "run_id": 32938102258,
+            "lane": "informational",
+            "similarity": 0.7218
+          },
+          {
+            "row_id": 1,
+            "run_id": 32849337397,
+            "lane": null,
+            "similarity": 0.5622
+          }
+        ],
+        "top_similarity": 0.8026,
+        "top_row_id": 2,
+        "matched": false,
+        "matched_row_id": null,
+        "matched_similarity": null,
+        "past_summary": ""
+      },
+      "seconds": 339.94
+    },
+    {
+      "id": "syn-02",
+      "group": "synthetic",
+      "description": "pip times out reaching pypi.org. The diff only edited the README.",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_lane": "safe_auto_fix",
+      "lane_rationale": "STEP 3. A read timeout to an external host, and a README edit cannot possibly have caused it. Re-running unchanged is genuinely likely to pass.",
+      "expected_memory": null,
+      "actual_lane": "safe_auto_fix",
+      "actual_category": "safe_auto_fix",
+      "guard_note": "",
+      "model_reason": "Step 3: the failure is likely flaky network timeout, unrelated to the diff.",
+      "diagnosis": "The test job failed because pip could not download fastapi from PyPI due to a read timeout. The change to README.md does not explain this network issue.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": null,
+        "neighbours": [
+          {
+            "row_id": 8,
+            "run_id": 32872512711,
+            "lane": "needs_review",
+            "similarity": 0.5013
+          },
+          {
+            "row_id": 7,
+            "run_id": 32872512711,
+            "lane": "needs_review",
+            "similarity": 0.5013
+          },
+          {
+            "row_id": 4,
+            "run_id": 32867842998,
+            "lane": null,
+            "similarity": 0.5009
+          }
+        ],
+        "top_similarity": 0.5013,
+        "top_row_id": 8,
+        "matched": false,
+        "matched_row_id": null,
+        "matched_similarity": null,
+        "past_summary": ""
+      },
+      "seconds": 267.7
+    },
+    {
+      "id": "syn-03",
+      "group": "synthetic",
+      "description": "The runner was deprovisioned mid-job. Nothing to do with the code.",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_lane": "safe_auto_fix",
+      "lane_rationale": "STEP 3. A runner/infrastructure error. The tests that ran passed; the machine went away.",
+      "expected_memory": null,
+      "actual_lane": "safe_auto_fix",
+      "actual_category": "safe_auto_fix",
+      "guard_note": "",
+      "model_reason": "STEP 3: The failure is flaky (runner lost communication) and re\u2011running the same code is likely to succeed; no source code edit is required.",
+      "diagnosis": "The test job crashed because the self\u2011hosted runner lost communication with the server while running pytest, which is a flaky network/runner issue unrelated to the code change that added a \"version\" field to the health endpoint. The diff does not explain the failure.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": null,
+        "neighbours": [
+          {
+            "row_id": 2,
+            "run_id": 32850254347,
+            "lane": null,
+            "similarity": 0.806
+          },
+          {
+            "row_id": 13,
+            "run_id": 32938102258,
+            "lane": "informational",
+            "similarity": 0.6791
+          },
+          {
+            "row_id": 1,
+            "run_id": 32849337397,
+            "lane": null,
+            "similarity": 0.664
+          }
+        ],
+        "top_similarity": 0.806,
+        "top_row_id": 2,
+        "matched": false,
+        "matched_row_id": null,
+        "matched_similarity": null,
+        "past_summary": ""
+      },
+      "seconds": 220.0
+    },
+    {
+      "id": "syn-04",
+      "group": "synthetic",
+      "description": "The Dockerfile asks for a base image tag that does not exist.",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_lane": "informational",
+      "lane_rationale": "STEP 2. A Dockerfile is named in the step as build machinery.",
+      "expected_memory": null,
+      "actual_lane": "informational",
+      "actual_category": "informational",
+      "guard_note": "",
+      "model_reason": "Step 2: the failure is due to a change in the Dockerfile, which is CI machinery.",
+      "diagnosis": "The Dockerfile was changed to use the non\u2011existent image tag python:3.99-slim, causing the docker build to fail with \"not found\". The fix is to revert to a valid tag such as python:3.12-slim.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": null,
+        "neighbours": [
+          {
+            "row_id": 2,
+            "run_id": 32850254347,
+            "lane": null,
+            "similarity": 0.7456
+          },
+          {
+            "row_id": 13,
+            "run_id": 32938102258,
+            "lane": "informational",
+            "similarity": 0.6912
+          },
+          {
+            "row_id": 1,
+            "run_id": 32849337397,
+            "lane": null,
+            "similarity": 0.5446
+          }
+        ],
+        "top_similarity": 0.7456,
+        "top_row_id": 2,
+        "matched": false,
+        "matched_row_id": null,
+        "matched_similarity": null,
+        "past_summary": ""
+      },
+      "seconds": 6.57
+    },
+    {
+      "id": "syn-05",
+      "group": "synthetic",
+      "description": "Source logic returns the wrong greeting; the test is correct.",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_lane": "needs_review",
+      "lane_rationale": "STEP 4. The one file to edit is src/greeting.py - program behaviour changed and broke a correct test.",
+      "expected_memory": null,
+      "actual_lane": "needs_review",
+      "actual_category": "needs_review",
+      "guard_note": "",
+      "model_reason": "Rule 4: the failure requires editing source code to correct the logic.",
+      "diagnosis": "The test expects the greet function to return \"Hello, Ada!\", but the recent change in src/greeting.py switched the greeting to \"Hi, {name}!\", causing the assertion to fail. Fix: change the return statement back to f\"Hello, {name}!\".",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": null,
+        "neighbours": [
+          {
+            "row_id": 3,
+            "run_id": 32850819521,
+            "lane": null,
+            "similarity": 0.74
+          },
+          {
+            "row_id": 1,
+            "run_id": 32849337397,
+            "lane": null,
+            "similarity": 0.74
+          },
+          {
+            "row_id": 4,
+            "run_id": 32867842998,
+            "lane": null,
+            "similarity": 0.6986
+          }
+        ],
+        "top_similarity": 0.74,
+        "top_row_id": 3,
+        "matched": false,
+        "matched_row_id": null,
+        "matched_similarity": null,
+        "past_summary": ""
+      },
+      "seconds": 316.0
+    },
+    {
+      "id": "syn-06",
+      "group": "synthetic",
+      "description": "package.json names a package that is not on the npm registry.",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_lane": "informational",
+      "lane_rationale": "STEP 2. package.json is dependency machinery, in the same family as requirements.txt, and a typo'd package name is the npm version of a version pin that does not exist.",
+      "expected_memory": null,
+      "actual_lane": "informational",
+      "actual_category": "informational",
+      "guard_note": "",
+      "model_reason": "Step 2: the problematic file is package.json, a CI build configuration file.",
+      "diagnosis": "The npm install step failed because the added dependency \"leftpadd\" (typo) does not exist in the npm registry, causing npm ci to exit with a 404 error.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": null,
+        "neighbours": [
+          {
+            "row_id": 2,
+            "run_id": 32850254347,
+            "lane": null,
+            "similarity": 0.6099
+          },
+          {
+            "row_id": 13,
+            "run_id": 32938102258,
+            "lane": "informational",
+            "similarity": 0.5917
+          },
+          {
+            "row_id": 1,
+            "run_id": 32849337397,
+            "lane": null,
+            "similarity": 0.5014
+          }
+        ],
+        "top_similarity": 0.6099,
+        "top_row_id": 2,
+        "matched": false,
+        "matched_row_id": null,
+        "matched_similarity": null,
+        "past_summary": ""
+      },
+      "seconds": 388.09
+    },
+    {
+      "id": "syn-07",
+      "group": "synthetic",
+      "description": "A newly added test asserts on wall-clock timing and fails.",
+      "ambiguous": true,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_lane": "needs_review",
+      "lane_rationale": "GENUINELY AMBIGUOUS, and the interesting kind. STEP 3 lists 'a test that depends on timing' as a flaky sign, which points at safe_auto_fix. But STEP 3 also requires that nothing in the diff plausibly explains the failure, and here the diff ADDED the timing-dependent test - so STEP 3 does not apply and STEP 4 does. Re-running would sometimes pass, which is exactly why it is a bad test rather than a flaky one. I expect needs_review; safe_auto_fix is a defensible answer and should be read as a near miss.",
+      "expected_memory": null,
+      "actual_lane": "needs_review",
+      "actual_category": "needs_review",
+      "guard_note": "",
+      "model_reason": "Step\u202f4: the failure requires editing test code (or source) to resolve.",
+      "diagnosis": "The new test in tests/test_cache.py measures the latency of cache.get(\"k\") and expects it to be under 1\u202fms, but the current cache implementation takes about 3\u202fms, causing the assertion to fail. The test is too strict for the current implementation. Fix: lower the threshold to 0.005\u202fs or adjust the cache to be faster.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": null,
+        "neighbours": [
+          {
+            "row_id": 3,
+            "run_id": 32850819521,
+            "lane": null,
+            "similarity": 0.5578
+          },
+          {
+            "row_id": 1,
+            "run_id": 32849337397,
+            "lane": null,
+            "similarity": 0.5578
+          },
+          {
+            "row_id": 6,
+            "run_id": 32871619454,
+            "lane": "needs_review",
+            "similarity": 0.5191
+          }
+        ],
+        "top_similarity": 0.5578,
+        "top_row_id": 3,
+        "matched": false,
+        "matched_row_id": null,
+        "matched_similarity": null,
+        "past_summary": ""
+      },
+      "seconds": 244.26
+    },
+    {
+      "id": "syn-08",
+      "group": "synthetic",
+      "description": "The workflow token lacks permission to comment on the PR.",
+      "ambiguous": true,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_lane": "needs_review",
+      "lane_rationale": "GENUINELY AMBIGUOUS. STEP 1 names permissions and stops there, which gives needs_review. But the one file to edit is ci.yml, which is exactly what STEP 2 calls machinery - and STEP 2 would give informational. The prompt resolves it by order: STEP 1 runs first and says stop. I expect needs_review, and informational is the reasonable disagreement.",
+      "expected_memory": null,
+      "actual_lane": "informational",
+      "actual_category": "informational",
+      "guard_note": "",
+      "model_reason": "Step 2: the failure is due to a change in the CI workflow file (.github/workflows/ci.yml), which is build/CI machinery.",
+      "diagnosis": "The workflow removed the permissions block that granted the actions/github-script@v7 write access to pull\u2011request comments; without pull\u2011requests: write the script cannot post a comment and fails with a 403. Fix: add a permissions section granting pull\u2011requests: write (and any other needed scopes).",
+      "correct": false,
+      "error": null,
+      "memory": {
+        "excluded_run_id": null,
+        "neighbours": [
+          {
+            "row_id": 2,
+            "run_id": 32850254347,
+            "lane": null,
+            "similarity": 0.6832
+          },
+          {
+            "row_id": 13,
+            "run_id": 32938102258,
+            "lane": "informational",
+            "similarity": 0.5986
+          },
+          {
+            "row_id": 1,
+            "run_id": 32849337397,
+            "lane": null,
+            "similarity": 0.4889
+          }
+        ],
+        "top_similarity": 0.6832,
+        "top_row_id": 2,
+        "matched": false,
+        "matched_row_id": null,
+        "matched_similarity": null,
+        "past_summary": ""
+      },
+      "seconds": 102.12
+    },
+    {
+      "id": "mid-01",
+      "group": "middle-zone",
+      "description": "Same missing-version failure as rows 9-12, different package (requests).",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_lane": "informational",
+      "lane_rationale": "STEP 2. A version pin that does not exist, in ci.yml.",
+      "expected_memory": {
+        "verdict": "should_match",
+        "against_rows": [
+          9,
+          10,
+          11,
+          12
+        ],
+        "confidence": "guess",
+        "why": "Identical failure mode, identical fix shape, identical file. Only the package name differs. A past diagnosis of the pytest version would genuinely help here, so a hint would be welcome. GUESS: I expect roughly 0.90-0.97 - high, but below the ~1.00 the true pairs have scored so far, because the package name is a real token difference."
+      },
+      "actual_lane": "informational",
+      "actual_category": "informational",
+      "guard_note": "",
+      "model_reason": "Step 2: the failure is in a CI workflow file (.github/workflows/ci.yml) which is build machinery.",
+      "diagnosis": "The job failed because the workflow changed the pip install command to pin requests to a non\u2011existent version 999.999.999, causing pip to report no matching distribution. Fix: change the install line to use a valid version or remove the pin.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": null,
+        "neighbours": [
+          {
+            "row_id": 2,
+            "run_id": 32850254347,
+            "lane": null,
+            "similarity": 0.7959
+          },
+          {
+            "row_id": 13,
+            "run_id": 32938102258,
+            "lane": "informational",
+            "similarity": 0.7681
+          },
+          {
+            "row_id": 9,
+            "run_id": 32875124103,
+            "lane": "informational",
+            "similarity": 0.6191
+          }
+        ],
+        "top_similarity": 0.7959,
+        "top_row_id": 2,
+        "matched": false,
+        "matched_row_id": null,
+        "matched_similarity": null,
+        "past_summary": ""
+      },
+      "seconds": 195.72
+    },
+    {
+      "id": "mid-02",
+      "group": "middle-zone",
+      "description": "Same apt failure as row 13, different package name.",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_lane": "informational",
+      "lane_rationale": "STEP 2. Same shape as hist-06.",
+      "expected_memory": {
+        "verdict": "should_match",
+        "against_rows": [
+          13
+        ],
+        "confidence": "guess",
+        "why": "The two logs differ in one token: the package name. Row 13's diagnosis transfers almost word for word. GUESS: very high, possibly 0.95+, which would put it above the threshold. If this one lands BELOW 0.90 the threshold is too strict."
+      },
+      "actual_lane": "informational",
+      "actual_category": "informational",
+      "guard_note": "",
+      "model_reason": "Step 2: the failing file is a CI workflow under .github/workflows/, so the category is informational.",
+      "diagnosis": "The workflow added a step to install a non\u2011existent package, libproj-not-real, causing apt\u2011get to fail with \"Unable to locate package\". The error is due to the incorrect package name in the CI workflow. Fix: replace libproj-not-real with the correct package name or remove the line.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": null,
+        "neighbours": [
+          {
+            "row_id": 13,
+            "run_id": 32938102258,
+            "lane": "informational",
+            "similarity": 0.9431
+          },
+          {
+            "row_id": 2,
+            "run_id": 32850254347,
+            "lane": null,
+            "similarity": 0.8155
+          },
+          {
+            "row_id": 1,
+            "run_id": 32849337397,
+            "lane": null,
+            "similarity": 0.5387
+          }
+        ],
+        "top_similarity": 0.9431,
+        "top_row_id": 13,
+        "matched": true,
+        "matched_row_id": 13,
+        "matched_similarity": 0.9431,
+        "past_summary": "Date: 2026-08-26\nRepository: aeturijayasimhayadav2004/buildDocterRepo1\nWorkflow run: 32938102258\nHow it was handled: informational\nSimilarity to the current failure: 0.94\nWhat was concluded then:\nThe workflow added a step to install a non\u2011existent package, libgdal-does-not-exist, causing apt\u2011get to fail with \"Unable to locate package\". The failure is due to the incorrect package name in the CI workflow. Fix: Replace libgdal-does-not-exist with the correct package name or remove the line."
+      },
+      "seconds": 75.94
+    },
+    {
+      "id": "mid-03",
+      "group": "middle-zone",
+      "description": "Same ModuleNotFoundError shape as rows 4/6/7/8, different module and file.",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_lane": "needs_review",
+      "lane_rationale": "STEP 4. An import of a module the project should contain but does not.",
+      "expected_memory": {
+        "verdict": "should_match",
+        "against_rows": [
+          4,
+          6,
+          7,
+          8
+        ],
+        "confidence": "guess",
+        "why": "Same error class, same fix shape - create the package or fix the import. Two tokens differ: the module name and the test file name. GUESS: high, 0.90-0.97. A hint here would help."
+      },
+      "actual_lane": "needs_review",
+      "actual_category": "needs_review",
+      "guard_note": "",
+      "model_reason": "Step 4: the failure requires adding source code (the missing utils package) rather than a CI or dependency change.",
+      "diagnosis": "The test imports `utils.strings.slugify`, but the repository has no `utils` package, so Python raises `ModuleNotFoundError`. Add a `utils` package with a `strings.py` module that defines `slugify`.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": null,
+        "neighbours": [
+          {
+            "row_id": 4,
+            "run_id": 32867842998,
+            "lane": null,
+            "similarity": 0.9763
+          },
+          {
+            "row_id": 6,
+            "run_id": 32871619454,
+            "lane": "needs_review",
+            "similarity": 0.976
+          },
+          {
+            "row_id": 7,
+            "run_id": 32872512711,
+            "lane": "needs_review",
+            "similarity": 0.9753
+          }
+        ],
+        "top_similarity": 0.9763,
+        "top_row_id": 4,
+        "matched": true,
+        "matched_row_id": 4,
+        "matched_similarity": 0.9763,
+        "past_summary": "Date: 2026-08-25\nRepository: aeturijayasimhayadav2004/buildDocterRepo1\nWorkflow run: 32867842998\nHow it was handled: unrecorded\nSimilarity to the current failure: 0.98\nWhat was concluded then:\nThe test imports `app.settings`, but the repository has no top\u2011level `app` package, so Python raises `ModuleNotFoundError`.  \nAdd an `app` package that exposes the `settings` module (or adjust the import to the correct path).  \n\nFix: Create `app/__init__.py` and move or symlink the settings module into it, e.g.:\n\n```bash\nmkdir app\necho \"\" > app/__init__.py\ncp path/to/your/settings.py app/settings.py\n```"
+      },
+      "seconds": 436.04
+    },
+    {
+      "id": "mid-04",
+      "group": "middle-zone",
+      "description": "Same assertion-failure shape as rows 1/3, different numbers and file.",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_lane": "needs_review",
+      "lane_rationale": "STEP 4. A wrong assertion in test code.",
+      "expected_memory": {
+        "verdict": "should_match",
+        "against_rows": [
+          1,
+          3
+        ],
+        "confidence": "guess",
+        "why": "Structurally identical to rows 1 and 3 - a pytest assertion failure on arithmetic - but a different file, a different operator and different numbers. This is the case memory.py's own comment flags as untested: the true pairs so far are the SAME fixture twice, so 0.994 is the floor for identical, not for merely similar. GUESS: 0.88-0.95, and this is the one I would least like to bet on."
+      },
+      "actual_lane": "needs_review",
+      "actual_category": "needs_review",
+      "guard_note": "",
+      "model_reason": "Rule 4: the failure requires editing source code (the test file) to correct the assertion.",
+      "diagnosis": "The new test file tests/test_arith.py contains an incorrect assertion: it expects 2 * 2 to equal 5, causing the test to fail. Fix: change the assertion to assert 2 * 2 == 4.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": null,
+        "neighbours": [
+          {
+            "row_id": 3,
+            "run_id": 32850819521,
+            "lane": null,
+            "similarity": 0.9254
+          },
+          {
+            "row_id": 1,
+            "run_id": 32849337397,
+            "lane": null,
+            "similarity": 0.9254
+          },
+          {
+            "row_id": 6,
+            "run_id": 32871619454,
+            "lane": "needs_review",
+            "similarity": 0.7696
+          }
+        ],
+        "top_similarity": 0.9254,
+        "top_row_id": 3,
+        "matched": true,
+        "matched_row_id": 3,
+        "matched_similarity": 0.9254,
+        "past_summary": "Date: 2026-08-25\nRepository: aeturijayasimhayadav2004/buildDocterRepo1\nWorkflow run: 32850819521\nHow it was handled: unrecorded\nSimilarity to the current failure: 0.93\nWhat was concluded then:\nThe test `tests/test_math.py` was added with an assertion that `1 + 1 == 3`, which is incorrect and caused the test to fail. The failure is due to the new test file containing a wrong expectation.  \nFix: Change the assertion to `assert 1 + 1 == 2`."
+      },
+      "seconds": 460.44
+    },
+    {
+      "id": "mid-05",
+      "group": "middle-zone",
+      "description": "pip fails on the same command as rows 9-12, but from a network timeout rather than a bad version. Opposite cause, opposite lane.",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_lane": "safe_auto_fix",
+      "lane_rationale": "STEP 3. DNS resolution failure reaching pypi.org. Re-running unchanged is likely to pass, and the diff (adding --no-cache-dir) cannot cause a name-resolution failure.",
+      "expected_memory": {
+        "verdict": "should_not_match",
+        "against_rows": [
+          9,
+          10,
+          11,
+          12
+        ],
+        "confidence": "guess",
+        "why": "THE DANGEROUS ONE. Same job, same step, same pip command, and a lot of shared vocabulary - ERROR, pip, pytest, Could not install. But the cause is the opposite kind of thing and so is the correct lane: this is amber, those rows are teal. A hint from row 10 would push the model towards 'a version that does not exist', which is not what happened. GUESS: 0.80-0.92, and if it lands above 0.90 the threshold is admitting a match that a human would not want."
+      },
+      "actual_lane": "safe_auto_fix",
+      "actual_category": "safe_auto_fix",
+      "guard_note": "",
+      "model_reason": "Step 3: identified the failure as flaky network connectivity, not a code or configuration bug.",
+      "diagnosis": "The test job failed because pip could not resolve pypi.org to install pytest, causing an OSError during dependency installation. The change to add `--no-cache-dir` in the workflow does not explain the network failure, so the issue is likely a transient network glitch.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": null,
+        "neighbours": [
+          {
+            "row_id": 9,
+            "run_id": 32875124103,
+            "lane": "informational",
+            "similarity": 0.5687
+          },
+          {
+            "row_id": 5,
+            "run_id": 32871387114,
+            "lane": "needs_review",
+            "similarity": 0.5687
+          },
+          {
+            "row_id": 7,
+            "run_id": 32872512711,
+            "lane": "needs_review",
+            "similarity": 0.5682
+          }
+        ],
+        "top_similarity": 0.5687,
+        "top_row_id": 9,
+        "matched": false,
+        "matched_row_id": null,
+        "matched_similarity": null,
+        "past_summary": ""
+      },
+      "seconds": 532.54
+    },
+    {
+      "id": "mid-06",
+      "group": "middle-zone",
+      "description": "Node cannot find a module. Same words as the Python ModuleNotFoundError rows, completely different ecosystem and fix.",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_lane": "informational",
+      "lane_rationale": "STEP 2. The one file to edit is package.json - the dependency was removed from it. Dependency machinery, not program behaviour.",
+      "expected_memory": {
+        "verdict": "should_not_match",
+        "against_rows": [
+          4,
+          6,
+          7,
+          8
+        ],
+        "confidence": "guess",
+        "why": "'Cannot find module' versus 'No module named' is nearly the same English sentence, which is exactly the kind of surface similarity an embedding can be fooled by. But the fix is different (npm install versus create a Python package) and the lane is different. GUESS: 0.70-0.88, so probably rejected - but if it lands above 0.90 that is a false match worth knowing about."
+      },
+      "actual_lane": "needs_review",
+      "actual_category": "needs_review",
+      "guard_note": "",
+      "model_reason": "Step 4: the failure requires editing source code (package.json) to restore a missing dependency.",
+      "diagnosis": "The test fails because the package.json no longer lists the express dependency, so running the built server cannot resolve the 'express' module. The diff removed the \"express\" entry from dependencies, causing the MODULE_NOT_FOUND error. Fix: Add \"express\": \"^4.19.2\" back to the dependencies in package.json.",
+      "correct": false,
+      "error": null,
+      "memory": {
+        "excluded_run_id": null,
+        "neighbours": [
+          {
+            "row_id": 2,
+            "run_id": 32850254347,
+            "lane": null,
+            "similarity": 0.7429
+          },
+          {
+            "row_id": 13,
+            "run_id": 32938102258,
+            "lane": "informational",
+            "similarity": 0.6926
+          },
+          {
+            "row_id": 1,
+            "run_id": 32849337397,
+            "lane": null,
+            "similarity": 0.5615
+          }
+        ],
+        "top_similarity": 0.7429,
+        "top_row_id": 2,
+        "matched": false,
+        "matched_row_id": null,
+        "matched_similarity": null,
+        "past_summary": ""
+      },
+      "seconds": 508.9
+    },
+    {
+      "id": "live-01",
+      "group": "live-crosscheck",
+      "description": "Verbatim replay of live row 7: module 'app' missing during collection; diff added an unrelated test",
+      "ambiguous": false,
+      "source_row": 7,
+      "recorded_lane": "needs_review",
+      "expected_lane": "needs_review",
+      "lane_rationale": "Expected lane here IS the recorded lane, deliberately. This group asks whether the eval path reproduces the live path, not whether the live path was right.",
+      "expected_memory": null,
+      "actual_lane": "needs_review",
+      "actual_category": "needs_review",
+      "guard_note": "",
+      "model_reason": "Rule 4: the failure requires editing source code (adding the missing 'app' module) rather than CI machinery.",
+      "diagnosis": "The test suite imports the module 'app', but the repository does not provide or install that package during the CI run, causing a ModuleNotFoundError. The diff only added a test file and does not address the missing module. Fix: Add an 'app' package to the repository or install it via requirements so it is importable during tests.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": 32872512711,
+        "neighbours": [
+          {
+            "row_id": 6,
+            "run_id": 32871619454,
+            "lane": "needs_review",
+            "similarity": 0.9997
+          },
+          {
+            "row_id": 4,
+            "run_id": 32867842998,
+            "lane": null,
+            "similarity": 0.9993
+          },
+          {
+            "row_id": 3,
+            "run_id": 32850819521,
+            "lane": null,
+            "similarity": 0.8095
+          }
+        ],
+        "top_similarity": 0.9997,
+        "top_row_id": 6,
+        "matched": true,
+        "matched_row_id": 6,
+        "matched_similarity": 0.9997,
+        "past_summary": "Date: 2026-08-25\nRepository: aeturijayasimhayadav2004/buildDocterRepo1\nWorkflow run: 32871619454\nHow it was handled: needs_review\nSimilarity to the current failure: 1.00\nWhat was concluded then:\nThe tests import the module 'app', but the repository does not install or expose that package during the CI run, so pytest fails with ModuleNotFoundError. The diff only changed the pytest version and does not address the missing module."
+      },
+      "seconds": 556.38
+    },
+    {
+      "id": "live-02",
+      "group": "live-crosscheck",
+      "description": "Verbatim replay of live row 9: ci.yml pins pytest==999.999.999",
+      "ambiguous": false,
+      "source_row": 9,
+      "recorded_lane": "informational",
+      "expected_lane": "informational",
+      "lane_rationale": "Expected lane here IS the recorded lane, deliberately. This group asks whether the eval path reproduces the live path, not whether the live path was right.",
+      "expected_memory": null,
+      "actual_lane": "informational",
+      "actual_category": "informational",
+      "guard_note": "",
+      "model_reason": "Step 2: the failure involves a CI machinery file (.github/workflows/ci.yml).",
+      "diagnosis": "The workflow in .github/workflows/ci.yml now attempts to pip install pytest==999.999.999, a version that does not exist, causing pip to fail during the test step. Fix: replace the version with a valid one such as pytest==7.4.3 or remove the explicit version constraint.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": 32875124103,
+        "neighbours": [
+          {
+            "row_id": 5,
+            "run_id": 32871387114,
+            "lane": "needs_review",
+            "similarity": 1.0
+          },
+          {
+            "row_id": 10,
+            "run_id": 32879223025,
+            "lane": "informational",
+            "similarity": 0.9938
+          },
+          {
+            "row_id": 11,
+            "run_id": 32879223025,
+            "lane": "informational",
+            "similarity": 0.9938
+          }
+        ],
+        "top_similarity": 1.0,
+        "top_row_id": 5,
+        "matched": true,
+        "matched_row_id": 5,
+        "matched_similarity": 1.0,
+        "past_summary": "Date: 2026-08-25\nRepository: aeturijayasimhayadav2004/buildDocterRepo1\nWorkflow run: 32871387114\nHow it was handled: needs_review\nSimilarity to the current failure: 1.00\nWhat was concluded then:\nThe workflow was changed to install pytest==999.999.999, which does not exist, causing pip to fail when running tests. The error originates from the modified line in .github/workflows/ci.yml. Fix: pip install pytest"
+      },
+      "seconds": 412.82
+    },
+    {
+      "id": "live-03",
+      "group": "live-crosscheck",
+      "description": "Verbatim replay of live row 12: ci.yml pins pytest==998.998.997; this run also used memory",
+      "ambiguous": false,
+      "source_row": 12,
+      "recorded_lane": "informational",
+      "expected_lane": "informational",
+      "lane_rationale": "Expected lane here IS the recorded lane, deliberately. This group asks whether the eval path reproduces the live path, not whether the live path was right.",
+      "expected_memory": null,
+      "actual_lane": "informational",
+      "actual_category": "informational",
+      "guard_note": "",
+      "model_reason": "Step 2: the relevant file is a CI workflow under .github/workflows/, so the category is informational.",
+      "diagnosis": "The log shows pip failed to find pytest==998.998.997, but the diff does not contain any change to the pip install command, so the change cannot explain the error.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": 32936360508,
+        "neighbours": [
+          {
+            "row_id": 10,
+            "run_id": 32879223025,
+            "lane": "informational",
+            "similarity": 0.9999
+          },
+          {
+            "row_id": 11,
+            "run_id": 32879223025,
+            "lane": "informational",
+            "similarity": 0.9999
+          },
+          {
+            "row_id": 9,
+            "run_id": 32875124103,
+            "lane": "informational",
+            "similarity": 0.9935
+          }
+        ],
+        "top_similarity": 0.9999,
+        "top_row_id": 10,
+        "matched": true,
+        "matched_row_id": 10,
+        "matched_similarity": 0.9999,
+        "past_summary": "Date: 2026-08-25\nRepository: aeturijayasimhayadav2004/buildDocterRepo1\nWorkflow run: 32879223025\nHow it was handled: informational\nSimilarity to the current failure: 1.00\nWhat was concluded then:\nThe test job fails because the workflow installs a non\u2011existent pytest version (998.998.998). The pip install command in .github/workflows/ci.yml is the culprit. Fix: change the pip install line to a valid pytest version or remove the pin."
+      },
+      "seconds": 484.19
+    },
+    {
+      "id": "live-04",
+      "group": "live-crosscheck",
+      "description": "Verbatim replay of live row 13: apt-get cannot locate libgdal-does-not-exist",
+      "ambiguous": false,
+      "source_row": 13,
+      "recorded_lane": "informational",
+      "expected_lane": "informational",
+      "lane_rationale": "Expected lane here IS the recorded lane, deliberately. This group asks whether the eval path reproduces the live path, not whether the live path was right.",
+      "expected_memory": null,
+      "actual_lane": "informational",
+      "actual_category": "informational",
+      "guard_note": "",
+      "model_reason": "Step 2: the failure is in a CI workflow file, not source code.",
+      "diagnosis": "The workflow added an apt-get install for a non\u2011existent package, libgdal-does-not-exist, causing the job to fail when the package manager cannot locate it. Remove or correct the package name in .github/workflows/ci.yml.",
+      "correct": true,
+      "error": null,
+      "memory": {
+        "excluded_run_id": 32938102258,
+        "neighbours": [
+          {
+            "row_id": 2,
+            "run_id": 32850254347,
+            "lane": null,
+            "similarity": 0.8333
+          },
+          {
+            "row_id": 1,
+            "run_id": 32849337397,
+            "lane": null,
+            "similarity": 0.5193
+          },
+          {
+            "row_id": 3,
+            "run_id": 32850819521,
+            "lane": null,
+            "similarity": 0.5193
+          }
+        ],
+        "top_similarity": 0.8333,
+        "top_row_id": 2,
+        "matched": false,
+        "matched_row_id": null,
+        "matched_similarity": null,
+        "past_summary": ""
+      },
+      "seconds": 363.83
+    }
+  ]
+}
