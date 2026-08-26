@@ -139,7 +139,31 @@ STEP 5. Otherwise -> "informational".
 
 JOB 3 - JUSTIFY (the "reason" field)
 
-One sentence naming which rule above you applied and why."""
+One sentence naming which rule above you applied and why.
+
+USING THE PAST FAILURE SECTION
+
+The message may contain a section titled PAST SIMILAR FAILURE. It is a
+diagnosis of a DIFFERENT, EARLIER build that an automated similarity
+search believed resembles this one. The search compares wording. It has no
+understanding of either build and it is sometimes wrong.
+
+Handle it in this order, and do not reorder these:
+
+  A. First decide what broke using ONLY the LOG EXCERPT and the DIFF.
+  B. Then read the past failure. If it agrees with what you already
+     decided, you may borrow specifics from it and you should say so in
+     your diagnosis, for example "this is the same failure as an earlier
+     run, where ...". If it disagrees with the evidence in front of you,
+     the EVIDENCE WINS: ignore the past failure entirely and do not
+     mention it.
+  C. JOB 2 is decided from the LOG EXCERPT and the DIFF alone. The past
+     failure's category is not evidence and does not appear anywhere in
+     STEP 1 to STEP 5. Never pick a category because the past failure
+     used it. Work through the steps as if that section were not there.
+
+Never state something as fact because the past record said it. It is a
+record of what was concluded once, not a record of what is true."""
 
 USER_TEMPLATE = """Repository: {repo}
 Failed job: {job_name}
@@ -149,7 +173,15 @@ Failed step: {step_name}
 {log_excerpt}
 
 === DIFF (the likely cause) ===
-{diff}"""
+{diff}{past}"""
+
+# Appended to the user message only when memory found a match above the
+# threshold. When there is no match this is the empty string and the
+# prompt is byte-for-byte the Phase 4 prompt.
+PAST_TEMPLATE = """
+
+=== PAST SIMILAR FAILURE (context, may be wrong - see instructions) ===
+{past_summary}"""
 
 # Appended on the retry, if the first response somehow fails validation.
 RETRY_NUDGE = (
@@ -188,8 +220,15 @@ def build_user_prompt(
     repo: str = "unknown",
     job_name: str = "unknown",
     step_name: str = "unknown",
+    past_summary: str = "",
 ) -> str:
-    """Assemble the user message. Separate so it can be inspected or logged."""
+    """Assemble the user message. Separate so it can be inspected or logged.
+
+    The past-failure section is appended LAST, after the evidence. Reading
+    order matters: the model meets the log and the diff before it meets
+    anyone else's conclusion about them, which is the same reason the
+    schema puts "diagnosis" before "category".
+    """
     return USER_TEMPLATE.format(
         repo=repo,
         job_name=job_name,
@@ -197,6 +236,7 @@ def build_user_prompt(
         log_excerpt=_truncate(log_excerpt, MAX_EXCERPT_CHARS, "log excerpt")
         or "<no log excerpt available>",
         diff=_truncate(diff, MAX_DIFF_CHARS, "diff") or "<no diff available>",
+        past=PAST_TEMPLATE.format(past_summary=past_summary) if past_summary else "",
     )
 
 
@@ -283,6 +323,7 @@ async def diagnose_failure(
     repo: str = "unknown",
     job_name: str = "unknown",
     step_name: str = "unknown",
+    past_summary: str = "",
 ) -> Triage:
     """Diagnose the failure and decide which lane it belongs in.
 
@@ -302,7 +343,9 @@ async def diagnose_failure(
         {"role": "system", "content": SYSTEM_PROMPT},
         {
             "role": "user",
-            "content": build_user_prompt(log_excerpt, diff, repo, job_name, step_name),
+            "content": build_user_prompt(
+                log_excerpt, diff, repo, job_name, step_name, past_summary
+            ),
         },
     ]
 

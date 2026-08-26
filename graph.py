@@ -69,6 +69,7 @@ class BuildState(TypedDict, total=False):
     first_step: str
     log_excerpt: str        # the trimmed log, the SYMPTOM
     diff: str               # the change that triggered the run, the CAUSE
+    past_summary: str       # a similar past failure, or "" - a HINT only
 
     # --- added by the classify node ---
     diagnosis: str          # what the model said broke
@@ -146,6 +147,11 @@ async def classify(state: BuildState) -> dict:
         repo=state.get("repo", "unknown"),
         job_name=", ".join(state.get("job_names") or []) or "unknown",
         step_name=state.get("first_step", "unknown"),
+        # Phase 6. Empty string when memory found nothing close enough, in
+        # which case the prompt is byte-for-byte the Phase 4 prompt. This
+        # is context for the DIAGNOSIS only - the categorising steps and
+        # the guard below are unchanged and read nothing from it.
+        past_summary=state.get("past_summary", ""),
     )
 
     lane = triage.category

@@ -2,12 +2,13 @@
 
 An agent that watches a GitHub repo and reacts when a CI build fails.
 
-**Current stage: Phase 5.** When a workflow run fails, BuildDoctor fetches the
-logs and the triggering diff, asks a model what went wrong *and which of three
-lanes the failure belongs in*, then acts on that decision - comment, re-run, or
-flag for a human - and stores the whole thing in Postgres. Those actions are
-carried out by a separate **MCP server**, which the app calls as a client.
-Three containers run together under `docker compose`.
+**Current stage: Phase 6.** When a workflow run fails, BuildDoctor fetches the
+logs and the triggering diff, **checks whether anything like this has failed
+before**, asks a model what went wrong *and which of three lanes the failure
+belongs in*, then acts on that decision - comment, re-run, or flag for a
+human - and stores the whole thing in Postgres. Those actions are carried out
+by a separate **MCP server**, which the app calls as a client. Three
+containers run together under `docker compose`.
 
 ## What it does now
 
@@ -18,9 +19,12 @@ Three containers run together under `docker compose`.
    - lists the jobs that failed and downloads their logs
    - cuts each log down to the lines around its `##[error]` markers
    - fetches the change that triggered the run (PR diff, or commit vs parent)
-   - asks an LLM to connect the symptom to the cause **and pick a lane**
+   - **searches its memory for a similar past failure** (see below)
+   - asks an LLM to connect the symptom to the cause **and pick a lane**,
+     passing any past match in as a hint
    - runs the action for that lane by calling the MCP server (see below)
    - writes a row to the `diagnoses` table in Postgres, including the lane
+     **and an embedding of the log, so this failure is findable next time**
 
 ## The three lanes
 
@@ -92,9 +96,160 @@ get wrong.
 | `log_excerpt.py` | Cuts a raw CI log down to the lines around the error |
 | `diagnose.py` | Asks the LLM for a diagnosis **and** a lane, as structured JSON |
 | `db.py` | The `diagnoses` table, and every line of SQL in the project |
+| `embeddings.py` | Turns a log excerpt into 384 numbers, using a local model |
+| `memory.py` | "Has this failed before?" - the similarity lookup and its threshold |
 | `migrate_jsonl.py` | One-time backfill of the old `diagnoses.jsonl` history |
+| `backfill_embeddings.py` | One-time backfill of embeddings for rows written before Phase 6 |
 | `Dockerfile` | One image, used by both the app and the MCP server |
 | `docker-compose.yml` | Runs app + mcp + postgres together |
+
+## Memory: has this failed before?
+
+Before Phase 6, every failure was diagnosed as if BuildDoctor had never seen a
+build in its life. Now it looks things up first.
+
+The problem with looking things up in CI logs is that keyword search is
+useless here - every log contains "error", "pytest" and "exit code 1". So each
+`log_excerpt` is turned into an **embedding**: a list of 384 numbers standing
+for what the text *means*. Two failures described in different words end up
+close together in that space, and "close" is something Postgres can sort by.
+
+| Piece | What it does |
+| ----- | ------------ |
+| `embeddings.py` | Runs `all-MiniLM-L6-v2` locally on the CPU and returns 384 numbers |
+| `db.py` | Stores them in a `vector(384)` column and runs the cosine-distance query |
+| `memory.py` | Decides whether the closest row is close **enough** |
+
+### The threshold, and where it came from
+
+`memory.SIMILARITY_THRESHOLD = 0.90`.
+
+This was measured, not guessed. The eleven rows already in the database fall
+into four groups that are known to be the same underlying failure, so every
+pair has a right answer:
+
+| | Measured cosine similarity |
+| --- | --- |
+| pairs that **should** match | 0.994 - 1.000 |
+| pairs that should **not** | 0.321 - **0.811** |
+
+**0.811 is the number that matters.** That is a failed assertion compared
+against a failed import - two completely unrelated problems that happen to
+produce the same *shape* of pytest output. The first draft of this file used
+0.80, and that dry run is what caught it: at 0.80, those two would have
+matched.
+
+0.90 sits near the middle of the empty band between the two ranges, so it is
+far from both edges rather than tuned to just clear one of them.
+
+One honest limitation: every true pair above is the *same* fixture failing
+twice, so 0.994 is the floor for **identical** failures, not for merely
+similar ones. There is no example yet of "similar but not identical", so the
+low side of the band is where the real uncertainty lives.
+
+### What happens at the boundary
+
+A decent-but-not-great match returns **None**, not a weak guess. Rejections
+print the number so the threshold stays tunable from evidence:
+
+```
+memory: closest is row 9 at 0.38, below the 0.90 threshold - treating as no match
+```
+
+The costs are not symmetric, which is the whole argument. A hint does not
+arrive in the prompt labelled as weak - it looks exactly as authoritative as a
+strong one, and it can drag a correct diagnosis towards a failure that never
+happened. **Missing a match costs one ordinary diagnosis. A false match costs
+a wrong one.**
+
+A run also cannot match **itself**: the lookup excludes the current `run_id`.
+Redelivering a webhook re-processes the same run, and without that exclusion
+the new diagnosis would match the row the previous delivery just wrote, at
+~1.00, and learn only that it equals itself.
+
+### How the hint reaches the model
+
+Only when a match clears the threshold, appended to the user message *after*
+the evidence:
+
+```
+=== PAST SIMILAR FAILURE (context, may be wrong - see instructions) ===
+Date: 2026-08-25
+Repository: owner/repo
+Workflow run: 32875124103
+How it was handled: informational
+Similarity to the current failure: 0.99
+What was concluded then:
+...
+```
+
+The system prompt then tells the model how to treat it: decide from the log
+and the diff **first**, read the past failure **second**, and if the two
+disagree, the evidence wins. Crucially, the categorising steps are fenced off
+from it entirely - *"the past failure's category is not evidence and does not
+appear anywhere in STEP 1 to STEP 5"*.
+
+That wording is deliberate. Phase 4 established that a **caveat** competing
+with an attractive rule loses, while a **gate that terminates** wins. A past
+diagnosis is very attractive - it looks like a confident answer that already
+exists - so "be careful with it" would not have held. Removing it from the
+classification steps' world does.
+
+When nothing matches, the prompt is byte-for-byte the Phase 5 prompt.
+
+### Why this is not an MCP tool
+
+Phase 5 drew the line at reads versus writes, and this stays on the same side
+of it.
+
+| | Exposed over MCP? | Why |
+| --- | --- | --- |
+| post a comment, add a label, re-run a job | **Yes** | they change the outside world, another client would genuinely want them, and each needs its "do not retry" rule published where a client can see it |
+| list failed jobs, download a log, fetch a diff | **No** | BuildDoctor's own evidence gathering; changes nothing, and the retry rule lives in one place (`@_reads`) |
+| **search past failures** | **No** | same reasoning - a read, gathering better evidence about a failure already being investigated |
+
+It changes nothing and has no side effect worth publishing a hint about.
+Putting it behind MCP would add a network hop, a serialisation format, and a
+second thing that can be down, in exchange for nothing.
+
+### Why the model weights are baked into the image
+
+The Dockerfile downloads `all-MiniLM-L6-v2` at **build** time rather than at
+container start. That makes a bigger image and a more boring runtime, which is
+the right trade here.
+
+BuildDoctor sits idle until a webhook arrives. Downloading at first use means
+the download happens at *exactly* the moment we can least afford a network
+problem - and the failure mode is not "slow", it is "the one build we exist to
+explain goes unexplained, and the reason is a stack trace nobody is watching".
+Phase 5 already lost a whole background task to one transient DNS blip.
+
+`HF_HUB_OFFLINE=1` is set in the image so this is a rule rather than a
+preference: at runtime the library cannot reach the network at all, so a
+missing weight fails loudly at startup instead of quietly during an incident.
+The model is also loaded during app startup, so the first webhook does not
+pay the few seconds it takes to load.
+
+The cost is honest: `sentence-transformers` pulls in PyTorch. The Dockerfile
+installs the **CPU-only** build explicitly, because plain `pip install torch`
+on Linux drags in the entire CUDA stack for a GPU that does not exist here.
+The `app` and `mcp` containers share the same image, so the size is paid once
+on disk, not twice.
+
+### Backfilling the rows from before Phase 6
+
+Rows written by Phases 3-5 have no embedding and are invisible to memory:
+
+```powershell
+docker compose exec app python backfill_embeddings.py
+```
+
+Safe to run repeatedly - it selects only rows `WHERE embedding IS NULL`, so a
+second run finds nothing. It reads `id` and `log_excerpt` and writes
+`embedding`, and looks at nothing else, which is why row 10 - whose
+`posted_url` is NULL because of the Phase 5 structured-output bug - backfills
+exactly like every other row. That NULL is a record of a bug in a different
+column and has nothing to do with what the log said.
 
 ## The MCP server
 
@@ -286,6 +441,25 @@ right container.
 This is verifiable rather than theoretical - from inside the app container,
 `http://mcp:8001/mcp` lists four tools and `http://localhost:8001/mcp` fails.
 
+### Why the Postgres image changed in Phase 6
+
+`postgres:16-alpine` became `pgvector/pgvector:pg16`. pgvector is an
+**extension**, not part of Postgres, and the alpine image does not ship it -
+`CREATE EXTENSION vector` simply fails there. The replacement is the same
+Postgres 16 with the extension installed, so the existing `pgdata` volume is
+reused as-is and no data moves.
+
+One caveat came with it: alpine uses musl and this image uses Debian/glibc,
+and they sort text slightly differently. Indexes on text columns are built in
+sort order, so they need a one-time reindex after the switch:
+
+```powershell
+docker compose exec postgres psql -U builddoctor -d builddoctor -c "REINDEX DATABASE builddoctor;"
+```
+
+Instant on a table this size, and skipping it is the kind of thing that bites
+silently much later.
+
 ### Why port 5433 on the host
 
 This machine already runs a native **PostgreSQL 18** Windows service on 5432.
@@ -360,6 +534,7 @@ Diagnoses live in the `diagnoses` table in Postgres.
 | `diagnosis_text` | text | what the model said |
 | `posted_to` | varchar(32) | `pr_comment`, `commit_comment`, or NULL if nothing was posted (the amber lane posts nothing) |
 | `lane` | varchar(32) | the lane that **actually ran**: `informational`, `safe_auto_fix`, or `needs_review` |
+| `embedding` | vector(384) | the meaning of `log_excerpt`, for memory. NULL means "not searchable yet" |
 | `raw` | jsonb | everything else recorded: `run_url`, `posted_url`, `failed_jobs`, `workflow`, `model`, `diff_source`, `diff_ref`, `failed_step`, `run_attempt`, `category_from_model`, `category_reason`, `guard_note`, `action`, `labels`, `rerun_requested` |
 
 `lane` records what happened, not what the model wanted. When the re-run guard
@@ -372,9 +547,33 @@ select id, run_id, lane, raw->>'category_from_model', raw->>'guard_note'
 from diagnoses where raw->>'guard_note' is not null;
 ```
 
-Tables are created by `create_all()` on startup. There is no Alembic yet, on
-purpose - `create_all` only ever creates what is missing, so the day a column
-actually changes is the day migrations earn their place.
+`raw->>'memory_match'` records whether a past failure was used for that row,
+and how similar it was.
+
+### Schema changes without Alembic
+
+Tables are created by `create_all()` on startup. That handles a brand new
+database, and it is exactly why it could not deliver Phase 6 on its own:
+`create_all` only ever **creates** what is missing. The `diagnoses` table
+already existed with eleven rows in it, so `create_all` saw a table by that
+name and moved on. The new column would never have appeared.
+
+So `db.py` also carries a short list of hand-written statements, run in order
+on every startup:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+ALTER TABLE diagnoses ADD COLUMN IF NOT EXISTS embedding vector(384);
+```
+
+Both are `IF NOT EXISTS`, so the second boot and the two-hundredth do nothing.
+Order matters - the `vector` type does not exist until the extension is
+installed.
+
+This style works because the change is purely **additive**: one new nullable
+column. The day a column has to be renamed, retyped, or backfilled with a real
+default while holding live data, this stops being enough. That is the day
+Alembic earns its place.
 
 Look at the data:
 

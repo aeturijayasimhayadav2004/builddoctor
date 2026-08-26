@@ -17,6 +17,7 @@ import os
 import time
 from datetime import datetime, timezone
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     DateTime,
@@ -26,10 +27,17 @@ from sqlalchemy import (
     create_engine,
     func,
     select,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+
+# Dimensions of the vector all-MiniLM-L6-v2 produces. Declared here because
+# it is a property of the COLUMN - Postgres needs a fixed width - and
+# embeddings.py asserts against it so a model swap fails loudly instead of
+# writing vectors the column silently rejects.
+EMBEDDING_DIM = 384
 
 # Inside Docker the host is the compose SERVICE NAME ("postgres"), not
 # localhost - see docker-compose.yml. The default here is the value that
@@ -109,6 +117,19 @@ class Diagnosis(Base):
     # alter a table that already holds data.
     lane: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
 
+    # The log excerpt, turned into 384 numbers by embeddings.py. This is
+    # what makes the row findable by MEANING rather than by keyword: two
+    # failures worded differently but describing the same thing end up
+    # close together in this space.
+    #
+    # Nullable, and that is load-bearing. Rows 1-11 predate Phase 6 and
+    # start NULL until backfill_embeddings.py fills them in, and a future
+    # row could fail to embed. Every search filters on IS NOT NULL, so a
+    # missing embedding means "not searchable yet", never a broken query.
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(EMBEDDING_DIM), nullable=True
+    )
+
     # Everything the pipeline records that has no column of its own:
     # run_url, posted_url, failed_jobs, workflow, model, diff_source,
     # diff_ref, failed_step. Kept verbatim so nothing is lost; a field can
@@ -150,14 +171,53 @@ def wait_for_database(attempts: int = 30, delay: float = 1.0) -> None:
     raise RuntimeError(f"database unreachable after {attempts} attempts: {last}")
 
 
-def init_db() -> None:
-    """Create the tables if they are missing.
+# Hand-written migration statements, run in order on every startup.
+#
+# Phase 3 said create_all only ever CREATEs, never ALTERs - and that is
+# exactly why it cannot deliver Phase 6. The diagnoses table already exists
+# with eleven rows in it, so create_all looks at it, sees a table by that
+# name, and moves on. The new column would never appear.
+#
+# So: one explicit statement per change, each written to be safe to run
+# again. IF NOT EXISTS on both means the second boot and the two-hundredth
+# boot do nothing at all.
+#
+# Order matters. The `vector` TYPE does not exist until the extension
+# creating it has been installed, so the ALTER cannot come first.
+#
+# This works because Phase 6's change is purely ADDITIVE - a new nullable
+# column. The day a column has to be renamed, retyped, or backfilled with
+# a real default while holding data, this style stops being enough, and
+# that is the day Alembic earns its place.
+MIGRATIONS = (
+    ("enable pgvector", "CREATE EXTENSION IF NOT EXISTS vector"),
+    (
+        "add diagnoses.embedding",
+        f"ALTER TABLE diagnoses ADD COLUMN IF NOT EXISTS "
+        f"embedding vector({EMBEDDING_DIM})",
+    ),
+)
 
-    No Alembic yet, by design. create_all only ever CREATEs what does not
-    exist - it will not alter a table whose columns have changed. The day
-    the schema changes, that is the day Alembic earns its place.
+
+def init_db() -> None:
+    """Create the tables if they are missing, then apply the migrations.
+
+    Three steps, in this order:
+      1. the extension, because create_all cannot build a vector column
+         without the vector type existing,
+      2. create_all, which builds the whole table on a brand new database,
+      3. the ALTER, which is what actually adds the column to a database
+         that already had the table. A no-op on a fresh one.
     """
+    with _engine.begin() as conn:
+        conn.execute(text(MIGRATIONS[0][1]))
+
     Base.metadata.create_all(_engine)
+
+    with _engine.begin() as conn:
+        for label, statement in MIGRATIONS[1:]:
+            conn.execute(text(statement))
+            print(f"  migration ok: {label}")
 
 
 def save_diagnosis(
@@ -171,6 +231,7 @@ def save_diagnosis(
     lane: str | None = None,
     created_at: datetime | None = None,
     raw: dict | None = None,
+    embedding: list[float] | None = None,
 ) -> int:
     """Insert one diagnosis. Returns its new primary key.
 
@@ -186,6 +247,10 @@ def save_diagnosis(
         posted_to=posted_to,
         lane=lane,
         raw=raw or {},
+        # Stored for EVERY lane, not only the ones that comment. Memory is
+        # about what failures look like, and an amber re-run is exactly as
+        # worth remembering as a teal explanation.
+        embedding=embedding,
     )
     # Only set when backfilling history; otherwise the server default wins.
     if created_at is not None:
@@ -195,6 +260,70 @@ def save_diagnosis(
         session.add(row)
         session.commit()
         return row.id
+
+
+def nearest_by_embedding(
+    vector: list[float],
+    *,
+    exclude_run_id: int | None = None,
+    limit: int = 1,
+) -> list[tuple[Diagnosis, float]]:
+    """Rows closest to `vector`, nearest first, with a similarity score.
+
+    Applies no threshold. This is the SQL half of the lookup and nothing
+    else - deciding whether a match is GOOD ENOUGH is a judgement call, and
+    it lives in memory.py where it can be explained and tuned.
+
+    Cosine distance (pgvector's `<=>`) measures the ANGLE between two
+    vectors and ignores their length, which is what we want: a 400-line log
+    and a 40-line log describing the same failure point the same direction.
+    Similarity is 1 - distance, so 1.0 is identical and 0.0 is unrelated.
+
+    exclude_run_id keeps a run from matching itself. Redelivering a webhook
+    re-processes the same run and would otherwise score ~1.00 against the
+    row it just wrote - a perfect match that teaches nothing. Memory should
+    be about OTHER builds.
+    """
+    distance = Diagnosis.embedding.cosine_distance(vector)
+    stmt = (
+        select(Diagnosis, distance.label("distance"))
+        # Rows that predate Phase 6, or whose embedding failed, are simply
+        # not searchable. They are skipped, never treated as distance 0.
+        .where(Diagnosis.embedding.isnot(None))
+        .order_by(distance)
+        .limit(limit)
+    )
+    if exclude_run_id is not None:
+        stmt = stmt.where(Diagnosis.run_id != exclude_run_id)
+
+    with Session() as session:
+        return [(row, 1.0 - float(dist)) for row, dist in session.execute(stmt)]
+
+
+def rows_missing_embeddings() -> list[Diagnosis]:
+    """Rows that have text but no vector. The backfill script's input."""
+    with Session() as session:
+        stmt = (
+            select(Diagnosis)
+            .where(Diagnosis.embedding.is_(None))
+            .order_by(Diagnosis.id)
+        )
+        return list(session.scalars(stmt))
+
+
+def set_embedding(row_id: int, vector: list[float]) -> None:
+    """Attach a vector to an existing row. Touches nothing else.
+
+    Deliberately narrow: it reads `id` and writes `embedding`, so a row
+    with odd data in an unrelated column - a NULL posted_url, say - is
+    backfilled exactly like any other.
+    """
+    with Session() as session:
+        row = session.get(Diagnosis, row_id)
+        if row is None:
+            return
+        row.embedding = vector
+        session.commit()
 
 
 def recent(limit: int = 20) -> list[Diagnosis]:

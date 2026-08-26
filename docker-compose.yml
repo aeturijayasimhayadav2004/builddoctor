@@ -5,7 +5,18 @@
 
 services:
   postgres:
-    image: postgres:16-alpine
+    # Phase 6 changed this from postgres:16-alpine.
+    #
+    # pgvector is an EXTENSION, not part of Postgres, and the alpine image
+    # does not ship it - CREATE EXTENSION vector simply fails there. This
+    # image is the same Postgres 16 with the extension already installed,
+    # so the existing pgdata volume is reused as-is.
+    #
+    # One caveat that came with the switch: alpine uses musl and this image
+    # uses Debian/glibc, which sort text slightly differently. Indexes on
+    # text columns (repo, lane) are built in sort order, so they need a
+    # one-time REINDEX after the change. See the README.
+    image: pgvector/pgvector:pg16
     environment:
       # These three create the role and database on first boot only, i.e.
       # when the pgdata volume is empty. Changing them later has no effect
