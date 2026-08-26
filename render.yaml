@@ -1,0 +1,146 @@
+# Render Blueprint - BuildDoctor's production deploy (Phase 9).
+#
+# Checked against Render's live documentation in Phase 9 rather than
+# written from memory. One thing had genuinely moved: `autoDeploy` is
+# superseded by `autoDeployTrigger`, which takes commit / checksPass / off.
+#
+#
+# WHY THERE IS ONLY ONE SERVICE HERE
+#
+# docker-compose.yml runs three containers - app, mcp, postgres - and the
+# obvious translation is three Render services. That translation is not
+# purchasable on a free plan, for two documented reasons:
+#
+#   1. Private services (type: pserv) have no free instance type. They
+#      start at Starter.
+#   2. "Free web services can send private network requests, but they
+#      can't receive them."
+#
+# The second is the one that closes the door. A free web service cannot
+# stand in for the private service, because the app would not be able to
+# REACH it - not a privacy downgrade, an outright disconnection.
+#
+# So the MCP server moves inside this service's container. It is still a
+# separate ASGI app, still spoken to over real HTTP with a real JSON-RPC
+# handshake; it just listens on loopback instead of on a network. See the
+# module docstring in server_combined.py for the full reasoning, including
+# the one way this IS weaker than a private service.
+#
+# Postgres moves out to Neon instead of becoming a Render Postgres, because
+# Render's free database expires 30 days after creation and Neon's free
+# tier does not expire. See the README.
+#
+#
+# MEMORY - THE CONSTRAINT THAT DECIDED THE SHAPE
+#
+# Render's free instance is 512 MiB. Measured under a real 512 MiB cap
+# before anything was deployed:
+#
+#   two uvicorn processes (app + mcp)   549 MiB   OOM-killed
+#   one process, mcp mounted in         446 MiB   healthy
+#
+# The difference is a second Python interpreter re-importing torch and
+# sentence-transformers. That is why dockerCommand below runs
+# server_combined:app and not main:app - it is a memory decision, not a
+# stylistic one. Roughly 65 MiB of headroom remains, which is thin, and
+# Phase 9 deliberately deployed on it to find out whether it holds.
+
+services:
+  - type: web
+    name: builddoctor
+    runtime: docker
+    plan: free
+    region: oregon
+    branch: master
+
+    # Build the existing image unchanged. The Dockerfile bakes the
+    # embedding weights in at build time (Phase 6), which matters more in
+    # production than it did locally: a free instance spins down after 15
+    # minutes idle, so it cold-starts often, and a cold start that had to
+    # reach Hugging Face would fail exactly when a build is waiting.
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+
+    # Overrides the Dockerfile's CMD (which runs main:app on 8000).
+    #
+    # Port 10000 is not arbitrary: it is Render's default value of PORT for
+    # every web service, so binding it means port detection agrees with us
+    # rather than having to guess. Host 0.0.0.0 is mandatory - Render
+    # states "Every Render web service must bind to a port on host
+    # 0.0.0.0", and 127.0.0.1 would be this container's own loopback,
+    # which Render's router can never reach.
+    dockerCommand: uvicorn server_combined:app --host 0.0.0.0 --port 10000
+
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+
+    envVars:
+      # ------------------------------------------------------------------
+      # Secrets. sync: false means Render PROMPTS for the value when the
+      # blueprint is first applied and never stores it in this file, so
+      # none of these four are committed to git.
+      # ------------------------------------------------------------------
+
+      # Neon's connection string, WITH ONE EDIT. Neon hands out a URL
+      # beginning postgresql:// - SQLAlchemy reads that scheme as psycopg2,
+      # a driver this project does not install. requirements.txt pins
+      # psycopg[binary]>=3.1, which is selected by postgresql+psycopg://.
+      # So the "postgresql" must become "postgresql+psycopg", and the
+      # ?sslmode=require that Neon appends must be kept.
+      - key: DATABASE_URL
+        sync: false
+
+      - key: GROQ_API_KEY
+        sync: false
+
+      # The same fine-grained, read-only, single-repo PAT the app already
+      # uses locally. Deliberately NOT the credential used to create this
+      # repo - see the README on why those two are kept apart.
+      - key: GITHUB_TOKEN
+        sync: false
+
+      # Must stay byte-identical to the secret configured in the target
+      # repository's webhook settings, or every delivery fails signature
+      # verification with a 401.
+      - key: WEBHOOK_SECRET
+        sync: false
+
+      # ------------------------------------------------------------------
+      # Topology. Not secret, so these live in the file.
+      # ------------------------------------------------------------------
+
+      # Under compose this is http://mcp:8001/mcp - a service name on a
+      # private network. Here it is this container talking to itself.
+      #
+      # The /internal prefix is the mount point chosen in
+      # server_combined.py; /mcp after it is the SDK's own endpoint path.
+      # Both parts are required - the prefix alone answers 404, which
+      # looks like the MCP server failed to start.
+      - key: MCP_SERVER_URL
+        value: http://localhost:10000/internal/mcp
+
+      # THE LINE THAT MAKES THE MCP ENDPOINT UNUSABLE FROM OUTSIDE.
+      #
+      # mcp_server.py checks the Host header against this list and answers
+      # 421 Misdirected Request on a mismatch. A request arriving through
+      # Render's router carries Host: <name>.onrender.com, which is not
+      # here, so it is refused before reaching a tool. The app's own call
+      # carries Host: localhost:10000, which is.
+      #
+      # Verified both directions before deploying: 421 for a foreign Host,
+      # successful handshake listing all four tools over loopback.
+      #
+      # This is load-bearing. Widening it to include the public hostname
+      # would expose four GitHub-writing tools to the internet with no
+      # authentication in front of them.
+      - key: MCP_ALLOWED_HOSTS
+        value: localhost:10000,127.0.0.1:10000
+
+      # CORS origins for the dashboard's /api routes. Empty on purpose:
+      # Phase 9 deploys the backend only, so there is no browser origin to
+      # trust yet. main.py's default is the two localhost:5173 dev origins,
+      # which would be meaningless here.
+      #
+      # Phase 10 sets this to wherever the dashboard is actually served.
+      - key: DASHBOARD_ORIGINS
+        value: ""
