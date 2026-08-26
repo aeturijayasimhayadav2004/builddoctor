@@ -376,6 +376,39 @@ the response shape is exactly the kind of thing that is easy to get subtly
 wrong, and this project has already proved that once - row 10's missing url is
 a Phase 5 untyped-dict bug that a type would have caught.
 
+### Filtering by lane
+
+The legend in the **By lane** card is not a legend, it is a control. Clicking
+`needs review` reduces the table to those four rows and dims the other slices
+in the bar; clicking it again, or the `clear` button next to the heading,
+brings everything back. It is the fastest way to answer the only question
+anyone actually asks of this page - *which ones need me?*
+
+The filtering happens in the browser. All thirteen rows are already in memory,
+so asking the server to re-send a subset of what the page is holding would be
+slower and would make the API responsible for a purely visual choice.
+
+Each legend row is a real `<button>` with `aria-pressed`, not a `<div>` with a
+click handler. That is what gets it Tab focus, Enter and Space, and a correct
+screen-reader announcement without any of it being written by hand.
+
+### How the page is put together
+
+| Decision | Why |
+| -------- | --- |
+| **Dark only** | This is an ops view that sits next to a terminal. There is no light theme to keep in sync, so every colour is stated once and meant. |
+| **IBM Plex Sans + JetBrains Mono** | Mono for anything that is an id, a percentage or a log line, so digits line up in a column and stop twitching between rows. Both have real system fallbacks, so the page survives with no network - it just loses the typography. |
+| **SVG icons, never text glyphs** | A character like `▸` renders at a different size, weight and baseline in every font on every platform. The previous version used one, and it could not be aligned reliably. |
+| **Lane = colour *and* a word** | Every badge carries a dot and a label. Colour alone would make the lane unreadable in a greyscale screenshot, on a bad projector, or to anyone who cannot separate teal from amber. |
+| **Skeletons, not a spinner** | Grey blocks the shape of what is coming stop the layout jumping when the data lands. A screen-reader-only `role="status"` says "Loading diagnoses" for anyone who is not looking at the blocks. |
+| **`prefers-reduced-motion` honoured** | Every animation on the page is decoration over content that is already complete, so when the operating system asks for it to stop, it stops. |
+
+Contrast is **measured, not eyeballed**. The browser check computes the real
+WCAG ratio from the rendered colours, and it earned its keep immediately: the
+faint grey used for footnotes and table headers came out at 4.11:1 and 3.63:1,
+which looked perfectly fine on screen and was still below the 4.5:1 floor. It
+is now `#7d8a9f`, at 5.5:1 and 4.9:1.
+
 ### This is a DEV setup
 
 The `frontend` container runs the **Vite dev server**. It compiles each file on

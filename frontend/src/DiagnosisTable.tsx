@@ -4,6 +4,14 @@ import type { Diagnosis } from "./api.ts";
 import LaneBadge from "./LaneBadge.tsx";
 import MemoryCell from "./MemoryCell.tsx";
 import { EMPTY, formatTime, orDash, percent, relativeTime } from "./format.ts";
+import {
+  ChevronRight,
+  ExternalLink,
+  FileText,
+  Inbox,
+  Sparkle,
+  Terminal,
+} from "./icons.tsx";
 
 /**
  * Every diagnosis, newest first, with rows that open in place.
@@ -17,7 +25,15 @@ import { EMPTY, formatTime, orDash, percent, relativeTime } from "./format.ts";
  * is valid HTML, and it keeps a row and its detail together instead of
  * relying on them happening to be adjacent.
  */
-export default function DiagnosisTable({ rows }: { rows: Diagnosis[] }) {
+export default function DiagnosisTable({
+  rows,
+  filtered = false,
+}: {
+  rows: Diagnosis[];
+  /** True when a lane filter is hiding rows, so the empty state can say so
+   *  rather than claiming the database is empty. */
+  filtered?: boolean;
+}) {
   const [open, setOpen] = useState<ReadonlySet<number>>(new Set());
 
   function toggle(id: number) {
@@ -34,10 +50,14 @@ export default function DiagnosisTable({ rows }: { rows: Diagnosis[] }) {
 
   if (rows.length === 0) {
     return (
-      <p className="empty">
-        No diagnoses yet. BuildDoctor writes a row here every time a watched
-        build fails.
-      </p>
+      <div className="empty">
+        <Inbox size={28} />
+        <p>
+          {filtered
+            ? "No diagnoses in this lane. Choose another lane, or clear the filter to see everything."
+            : "No diagnoses yet. BuildDoctor writes a row here every time a watched build fails."}
+        </p>
+      </div>
     );
   }
 
@@ -79,8 +99,13 @@ export default function DiagnosisTable({ rows }: { rows: Diagnosis[] }) {
                 aria-expanded={isOpen}
               >
                 <td className="col-toggle">
-                  <span className={isOpen ? "chevron down" : "chevron"} aria-hidden="true">
-                    ▸
+                  {/* An SVG, not a text arrow. A glyph like the black
+                      right-pointing triangle renders at a different size,
+                      weight and vertical position in every font on every
+                      platform, and there is no way to line it up with the
+                      text next to it once and have it stay lined up. */}
+                  <span className={isOpen ? "chevron down" : "chevron"}>
+                    <ChevronRight size={15} />
                   </span>
                 </td>
                 <td className="col-id">{row.id}</td>
@@ -89,7 +114,9 @@ export default function DiagnosisTable({ rows }: { rows: Diagnosis[] }) {
                       on every row here and eats half the column. */}
                   {row.repo.split("/").at(-1) ?? row.repo}
                 </td>
-                <td className="col-summary">{row.summary || EMPTY}</td>
+                <td className="col-summary" title={row.summary || undefined}>
+                  {row.summary || EMPTY}
+                </td>
                 <td>
                   <LaneBadge lane={row.lane} />
                 </td>
@@ -101,15 +128,20 @@ export default function DiagnosisTable({ rows }: { rows: Diagnosis[] }) {
                       for every amber run, which posts no comment at all. */}
                   {row.posted_url ? (
                     <a
+                      className="link"
                       href={row.posted_url}
                       target="_blank"
                       rel="noreferrer"
                       onClick={(event) => event.stopPropagation()}
                     >
                       {row.posted_to === "pr_comment" ? "on the PR" : "on the commit"}
+                      <ExternalLink size={12} />
                     </a>
                   ) : (
-                    <span className="muted" title="No comment url was recorded for this run">
+                    <span
+                      className="muted"
+                      title="No comment url was recorded for this run"
+                    >
                       {EMPTY}
                     </span>
                   )}
@@ -134,11 +166,11 @@ export default function DiagnosisTable({ rows }: { rows: Diagnosis[] }) {
                         </div>
                         <div>
                           <dt>Attempt</dt>
-                          <dd>{orDash(row.run_attempt)}</dd>
+                          <dd className="num">{orDash(row.run_attempt)}</dd>
                         </div>
                         <div>
                           <dt>Run</dt>
-                          <dd>
+                          <dd className="num">
                             {row.run_url ? (
                               <a href={row.run_url} target="_blank" rel="noreferrer">
                                 {row.run_id}
@@ -164,7 +196,10 @@ export default function DiagnosisTable({ rows }: { rows: Diagnosis[] }) {
 
                       {row.memory_match && (
                         <section className="panel panel-memory">
-                          <h3>Memory was used</h3>
+                          <h3>
+                            <Sparkle size={12} />
+                            Memory was used
+                          </h3>
                           <p>
                             This diagnosis was written with diagnosis{" "}
                             <strong>#{row.memory_match.row_id}</strong> (run{" "}
@@ -182,12 +217,18 @@ export default function DiagnosisTable({ rows }: { rows: Diagnosis[] }) {
                       )}
 
                       <section className="panel">
-                        <h3>Diagnosis</h3>
+                        <h3>
+                          <FileText size={12} />
+                          Diagnosis
+                        </h3>
                         <p className="prose">{row.diagnosis_text || EMPTY}</p>
                       </section>
 
                       <section className="panel">
-                        <h3>Log excerpt</h3>
+                        <h3>
+                          <Terminal size={12} />
+                          Log excerpt
+                        </h3>
                         <pre className="log">{row.log_excerpt || EMPTY}</pre>
                       </section>
                     </div>

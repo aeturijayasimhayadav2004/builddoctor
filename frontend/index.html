@@ -3,14 +3,44 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="Every CI failure BuildDoctor has diagnosed, and what it decided to do about each one."
+    />
+
     <!-- A browser asks for /favicon.ico on every page load whether one is
          declared or not. Without this it 404s, and a red error sits in the
          console during a demo for no reason. Inline SVG rather than a file,
-         so the repo gains no binary and the request never leaves the page. -->
+         so the repo gains no binary and the request never leaves the page.
+         The mark is the same heartbeat line used in the masthead. -->
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230d1117'/%3E%3Cpath d='M4 17h5l3-7 4 14 3-9 2 2h7' fill='none' stroke='%232dd4bf' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0e14'/%3E%3Cpath d='M4 17h5l3-7 4 14 3-9 2 2h7' fill='none' stroke='%232dd4bf' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"
     />
+
+    <!-- Fonts. IBM Plex Sans for the interface, JetBrains Mono for anything
+         that is a number, an id or a log line - the "Developer Mono"
+         pairing, which is what most tools in this category use and why the
+         page reads as a developer tool rather than a generic admin panel.
+
+         preconnect first: the browser opens the TCP and TLS connection to
+         Google's font hosts while it is still parsing this file, instead of
+         discovering it needs one only after the stylesheet arrives. That is
+         usually a couple of hundred milliseconds of the visible delay.
+
+         display=swap means text is drawn immediately in the fallback font
+         and swapped when the real one lands, rather than being invisible
+         while waiting. Both stacks in styles.css name real system fonts
+         after these, so with no network at all the page is still readable -
+         it just loses the typography. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
     <title>BuildDoctor</title>
   </head>
   <body>

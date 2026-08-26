@@ -1,139 +1,394 @@
 /* BuildDoctor dashboard.
  *
- * The three lane colours are the same names the project has used since
- * Phase 4 - teal, amber, coral - so the page, the README and the code all
- * describe the same thing. A fourth grey exists for rows that predate
- * lanes entirely.
+ * Dark-only on purpose. This is an operations view for a CI tool - it sits
+ * open on a second monitor next to a terminal, and a white page in that
+ * company is the thing people close. There is no light theme to keep in
+ * sync, so every colour below is stated once and meant.
+ *
+ * The three lane colours - teal, amber, coral - are the names this project
+ * has used since Phase 4. They are deliberately NOT changed to match any
+ * generic palette, because the README, the code comments and these styles
+ * all have to describe the same thing.
  */
 
+/* ---------------------------------------------------------------------- *
+ * Tokens
+ * ---------------------------------------------------------------------- */
+
 :root {
-  --bg: #0d1117;
-  --panel: #151b23;
-  --panel-2: #1c232d;
-  --line: #263141;
-  --text: #e6edf3;
-  --muted: #8b98a9;
+  /* Surfaces, darkest to lightest. Four steps is enough to express
+     page < card < raised < hover without anything looking washed out. */
+  --bg: #0b0e14;
+  --surface-1: #12161f;
+  --surface-2: #171c27;
+  --surface-3: #1e2431;
+  --well: #080b10;
+
+  --line: #222937;
+  --line-strong: #2f394b;
+
+  /* Three tiers of text, and all three are held to WCAG AA (4.5:1) against
+     the darkest surface they are allowed to sit on. --faint was #69748a
+     until a measured check put it at 4.11:1 on the page and 3.63:1 behind
+     the table header - close enough to look fine and still be a real
+     accessibility failure, which is exactly why it is measured rather
+     than eyeballed. */
+  --text: #e8eef6;   /* 16.6:1 on --bg */
+  --muted: #93a1b5;  /*  7.4:1 on --bg */
+  --faint: #7d8a9f;  /*  5.5:1 on --bg, 4.9:1 on --surface-2 */
 
   --teal: #2dd4bf;
   --amber: #f5b544;
   --coral: #fb7185;
-  --grey: #7d8b9e;
+  --grey: #8593a8;
+  --violet: #a78bfa;
+  --violet-text: #c7b6fd;
 
-  --radius: 10px;
+  /* One 4px rhythm for every gap, pad and margin in the file. Ad-hoc
+     values are what make a layout feel subtly crooked without anyone
+     being able to point at the reason. */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+  --s8: 32px;
+  --s10: 40px;
+  --s12: 48px;
+
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-pill: 999px;
+
+  /* Elevation. On a dark theme a shadow alone is nearly invisible, so each
+     step pairs a shadow with a hairline highlight along the top edge -
+     that inset line is what actually reads as "raised". */
+  --e1: 0 1px 2px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  --e2: 0 4px 16px -4px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+
+  --font-ui: "IBM Plex Sans", ui-sans-serif, system-ui, "Segoe UI", Roboto,
+    "Helvetica Neue", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", "Consolas",
+    "SF Mono", monospace;
+
+  /* One duration and one curve, so nothing on the page moves to a
+     different rhythm than anything else. */
+  --fast: 140ms;
+  --normal: 200ms;
+  --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 * {
   box-sizing: border-box;
 }
 
+html {
+  /* Anchor jumps and any future in-page link glide instead of teleporting. */
+  scroll-behavior: smooth;
+}
+
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 15px/1.55 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 code,
-pre {
-  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+pre,
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "liga" 0;
+}
+
+/* Anything that is a number in a column gets fixed-width digits, so a 1
+   and a 7 occupy the same space and the column stops twitching. */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+}
+
+::selection {
+  background: rgba(45, 212, 191, 0.28);
+}
+
+/* A dark page with a bright default scrollbar looks unfinished. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line-strong) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: var(--r-pill);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #3d4a60;
+  background-clip: content-box;
+}
+
+/* One focus treatment for the whole app. :focus-visible rather than :focus
+   so a mouse click does not leave a ring behind, while Tab always does. */
+:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
 }
 
 .page {
-  max-width: 1240px;
+  max-width: 1280px;
   margin: 0 auto;
-  padding: 32px 24px 80px;
+  padding: var(--s8) var(--s6) var(--s12);
 }
 
-/* --- masthead ---------------------------------------------------------- */
+/* ---------------------------------------------------------------------- *
+ * Masthead
+ * ---------------------------------------------------------------------- */
 
 .masthead {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 28px;
+  gap: var(--s6);
+  margin-bottom: var(--s8);
+  flex-wrap: wrap;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+}
+
+/* The same heartbeat mark as the favicon. A product with one consistent
+   mark reads as a product; one with a different mark per surface reads as
+   a prototype. */
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border-radius: var(--r-md);
+  color: var(--teal);
+  background: linear-gradient(
+    145deg,
+    rgba(45, 212, 191, 0.16),
+    rgba(45, 212, 191, 0.04)
+  );
+  border: 1px solid rgba(45, 212, 191, 0.28);
 }
 
 .masthead h1 {
   margin: 0;
-  font-size: 30px;
+  font-size: 27px;
+  font-weight: 600;
   letter-spacing: -0.02em;
+  line-height: 1.15;
 }
 
 .tagline {
-  margin: 6px 0 0;
+  margin: var(--s1) 0 0;
   color: var(--muted);
+  font-size: 14px;
+  max-width: 62ch;
 }
 
+.masthead-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+}
+
+/* A small "the API answered" indicator. Cheap to render and it removes the
+   most common question asked of a dashboard, which is whether the number
+   on screen is current or a ghost from five minutes ago. */
+.pulse-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  font-size: 12.5px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.pulse-dot::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--teal);
+  box-shadow: 0 0 0 3px rgba(45, 212, 191, 0.16);
+}
+
+.pulse-dot.is-stale::before {
+  background: var(--coral);
+  box-shadow: 0 0 0 3px rgba(251, 113, 133, 0.16);
+}
+
+/* ---------------------------------------------------------------------- *
+ * Buttons
+ * ---------------------------------------------------------------------- */
+
 button {
-  background: var(--panel-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  background: var(--surface-2);
   color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 9px 18px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  /* 40px tall. Below ~44px a control starts being genuinely hard to hit,
+     and this one is pressed by someone demoing under mild pressure. */
+  padding: 9px 15px;
+  min-height: 40px;
   font: inherit;
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+  box-shadow: var(--e1);
+  transition: background var(--fast) var(--ease),
+    border-color var(--fast) var(--ease), color var(--fast) var(--ease);
 }
 
 button:hover:not(:disabled) {
+  background: var(--surface-3);
   border-color: var(--teal);
+  color: var(--teal);
+}
+
+/* Feedback on press without moving anything. A transform here would nudge
+   the neighbouring text and read as jitter. */
+button:active:not(:disabled) {
+  background: #0f141d;
 }
 
 button:disabled {
-  opacity: 0.55;
-  cursor: default;
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-/* --- stat cards -------------------------------------------------------- */
+.spin {
+  animation: spin 900ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------------------------------------------------------------------- *
+ * Stat cards
+ * ---------------------------------------------------------------------- */
 
 .cards {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 14px;
-  margin-bottom: 34px;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  gap: var(--s4);
+  margin-bottom: var(--s8);
 }
 
 .card {
-  background: var(--panel);
+  background: var(--surface-1);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 16px 18px;
+  border-radius: var(--r-lg);
+  padding: var(--s5);
+  box-shadow: var(--e1);
+  min-width: 0;
+  transition: border-color var(--normal) var(--ease),
+    box-shadow var(--normal) var(--ease);
+}
+
+.card:hover {
+  border-color: var(--line-strong);
+  box-shadow: var(--e2);
 }
 
 .card-wide {
   grid-column: span 2;
-  min-width: 280px;
+  min-width: 290px;
 }
 
-.card h2 {
-  margin: 0 0 10px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-bottom: var(--s3);
   color: var(--muted);
+}
+
+.card-head h2 {
+  margin: 0;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: inherit;
+}
+
+.card-icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: var(--r-sm);
+  background: var(--surface-3);
+  color: var(--muted);
+}
+
+.card-icon.tint-teal {
+  color: var(--teal);
+  background: rgba(45, 212, 191, 0.11);
+}
+
+.card-icon.tint-violet {
+  color: var(--violet);
+  background: rgba(167, 139, 250, 0.11);
 }
 
 .figure {
   margin: 0;
-  font-size: 34px;
-  font-weight: 650;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 33px;
+  font-weight: 600;
   line-height: 1.1;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
 }
 
 .figure .unit {
-  font-size: 17px;
-  font-weight: 500;
+  font-size: 16px;
+  font-weight: 400;
   color: var(--muted);
-  margin-left: 2px;
+  margin-left: 1px;
+  letter-spacing: 0;
 }
 
 .note {
-  margin: 8px 0 0;
-  font-size: 13px;
+  margin: var(--s2) 0 0;
+  font-size: 12.5px;
+  line-height: 1.45;
   color: var(--muted);
 }
 
@@ -141,19 +396,31 @@ button:disabled {
   color: var(--muted);
 }
 
-/* --- lane bar ---------------------------------------------------------- */
+/* ---------------------------------------------------------------------- *
+ * Lane bar and its legend, which doubles as the table filter
+ * ---------------------------------------------------------------------- */
 
 .lane-bar {
   display: flex;
-  height: 10px;
-  border-radius: 999px;
-  overflow: hidden;
-  background: var(--panel-2);
-  margin-bottom: 12px;
+  gap: 2px;
+  height: 8px;
+  margin-bottom: var(--s3);
 }
 
 .lane-slice {
   height: 100%;
+  border-radius: var(--r-pill);
+  transition: opacity var(--normal) var(--ease);
+}
+
+/* When a lane is selected, the others recede rather than vanish - the
+   shape of the whole stays readable, which is the point of the bar. */
+.lane-bar.has-filter .lane-slice {
+  opacity: 0.22;
+}
+
+.lane-bar.has-filter .lane-slice.is-active {
+  opacity: 1;
 }
 
 .lane-informational { background: var(--teal); }
@@ -166,19 +433,59 @@ button:disabled {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 4px;
-  font-size: 13px;
+  gap: 2px;
 }
 
-.lane-legend li {
+/* Each legend row is a real button, not a div with an onClick. That gets
+   keyboard focus, Enter/Space, and a screen-reader announcement for free,
+   and aria-pressed says which one is currently on. */
+.lane-legend button {
+  width: 100%;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: var(--s2);
+  background: none;
+  border: 1px solid transparent;
+  box-shadow: none;
+  border-radius: var(--r-sm);
+  padding: 5px var(--s2);
+  min-height: 30px;
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text);
+  text-align: left;
 }
 
-.lane-legend strong {
+.lane-legend button:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: transparent;
+  color: var(--text);
+}
+
+.lane-legend button[aria-pressed="true"] {
+  background: var(--surface-3);
+  border-color: var(--line-strong);
+}
+
+.lane-legend button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.lane-legend .count {
   margin-left: auto;
   font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+.lane-legend .of {
+  color: var(--faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  min-width: 3.5ch;
+  text-align: right;
 }
 
 .dot {
@@ -188,74 +495,121 @@ button:disabled {
   flex: none;
 }
 
-/* --- badges and chips -------------------------------------------------- */
+/* ---------------------------------------------------------------------- *
+ * Badges and chips
+ * ---------------------------------------------------------------------- */
 
 .badge {
-  display: inline-block;
-  padding: 3px 9px;
-  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px 3px 7px;
+  border-radius: var(--r-pill);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
   border: 1px solid transparent;
+  line-height: 1.5;
+}
+
+/* The lane is carried by a coloured dot AND a word. Colour alone would
+   leave the lane unreadable to anyone who cannot separate teal from
+   amber, and unreadable entirely in a greyscale screenshot. */
+.badge .dot {
+  width: 6px;
+  height: 6px;
+  background: currentColor;
 }
 
 .badge-informational {
   color: var(--teal);
-  background: rgba(45, 212, 191, 0.12);
-  border-color: rgba(45, 212, 191, 0.32);
+  background: rgba(45, 212, 191, 0.1);
+  border-color: rgba(45, 212, 191, 0.3);
 }
 
 .badge-safe_auto_fix {
   color: var(--amber);
-  background: rgba(245, 181, 68, 0.12);
-  border-color: rgba(245, 181, 68, 0.32);
+  background: rgba(245, 181, 68, 0.1);
+  border-color: rgba(245, 181, 68, 0.3);
 }
 
 .badge-needs_review {
   color: var(--coral);
-  background: rgba(251, 113, 133, 0.12);
-  border-color: rgba(251, 113, 133, 0.32);
+  background: rgba(251, 113, 133, 0.1);
+  border-color: rgba(251, 113, 133, 0.3);
 }
 
 .badge-none {
   color: var(--grey);
-  background: rgba(125, 139, 158, 0.12);
-  border-color: rgba(125, 139, 158, 0.3);
+  background: rgba(133, 147, 168, 0.1);
+  border-color: rgba(133, 147, 168, 0.28);
 }
 
 .chip {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   padding: 2px 8px;
-  border-radius: 6px;
+  border-radius: var(--r-sm);
   font-size: 12px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
+  line-height: 1.6;
 }
 
 .chip-memory {
-  color: #c4b5fd;
-  background: rgba(167, 139, 250, 0.14);
-  border: 1px solid rgba(167, 139, 250, 0.32);
+  color: var(--violet-text);
+  background: rgba(167, 139, 250, 0.12);
+  border: 1px solid rgba(167, 139, 250, 0.3);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
 }
 
 .chip-quiet {
   color: var(--muted);
   border: 1px solid var(--line);
+  background: var(--surface-2);
 }
 
-/* --- table ------------------------------------------------------------- */
+/* ---------------------------------------------------------------------- *
+ * Table
+ * ---------------------------------------------------------------------- */
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s4);
+  flex-wrap: wrap;
+  margin-bottom: var(--s3);
+}
 
 .section-title {
   font-size: 15px;
   font-weight: 600;
-  margin: 0 0 10px;
+  margin: 0;
 }
 
 .section-title .muted {
   font-weight: 400;
   font-size: 13px;
-  margin-left: 8px;
+  margin-left: var(--s2);
+}
+
+.filter-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.filter-note button {
+  min-height: 28px;
+  padding: 2px var(--s2);
+  font-size: 12.5px;
+  border-radius: var(--r-sm);
+  box-shadow: none;
 }
 
 /* The scroll container. Eight columns of non-wrapping text have a floor
@@ -266,9 +620,10 @@ button:disabled {
  * off screen and is the single most obvious way for a dashboard to look
  * broken. */
 .rows-scroll {
-  background: var(--panel);
+  background: var(--surface-1);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
+  border-radius: var(--r-lg);
+  box-shadow: var(--e1);
   overflow-x: auto;
 }
 
@@ -282,12 +637,13 @@ button:disabled {
 
 .rows thead th {
   text-align: left;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--muted);
-  padding: 11px 12px;
+  color: var(--faint);
+  padding: var(--s3) var(--s3);
+  background: var(--surface-2);
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
 }
@@ -298,10 +654,11 @@ button:disabled {
 
 .summary-row {
   cursor: pointer;
+  transition: background var(--fast) var(--ease);
 }
 
 .summary-row:hover td {
-  background: var(--panel-2);
+  background: var(--surface-2);
 }
 
 .summary-row:focus-visible {
@@ -310,49 +667,63 @@ button:disabled {
 }
 
 .row-group.open .summary-row td {
-  background: var(--panel-2);
+  background: var(--surface-2);
+}
+
+/* A teal spine down the left of an open row, so which detail belongs to
+   which row stays obvious once two are open at the same time. */
+.row-group.open .summary-row td:first-child {
+  box-shadow: inset 3px 0 0 var(--teal);
 }
 
 .summary-row td {
-  padding: 11px 12px;
+  padding: var(--s3);
   vertical-align: middle;
 }
 
 .col-toggle {
-  width: 28px;
+  width: 30px;
   padding-right: 0 !important;
 }
 
 .col-id {
-  width: 44px;
-  color: var(--muted);
+  width: 46px;
+  color: var(--faint);
   font-variant-numeric: tabular-nums;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
 }
 
 .col-repo {
   white-space: nowrap;
+  font-size: 13.5px;
 }
 
 .col-summary {
   /* The widest column, and the one that must not push the others off the
      page. One line, cut with an ellipsis; the whole text is one click
      away in the detail panel. */
-  max-width: 460px;
+  max-width: 430px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 13.5px;
 }
 
 .col-when {
   white-space: nowrap;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 .chevron {
-  display: inline-block;
+  display: inline-flex;
+  color: var(--faint);
+  transition: transform var(--normal) var(--ease), color var(--fast) var(--ease);
+}
+
+.summary-row:hover .chevron {
   color: var(--muted);
-  transition: transform 0.15s;
 }
 
 .chevron.down {
@@ -363,17 +734,27 @@ button:disabled {
 a {
   color: var(--teal);
   text-decoration: none;
+  transition: color var(--fast) var(--ease);
 }
 
 a:hover {
   text-decoration: underline;
 }
 
-/* --- detail panel ------------------------------------------------------ */
+.link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+}
+
+/* ---------------------------------------------------------------------- *
+ * Detail panel
+ * ---------------------------------------------------------------------- */
 
 .detail-row td {
   padding: 0;
-  background: #10161e;
+  background: var(--well);
   border-top: 1px solid var(--line);
   /* max-width: 0 looks wrong and is load-bearing.
    *
@@ -388,12 +769,13 @@ a:hover {
    * no longer votes on how wide the table should be. Everything inside can
    * then be told to scroll on its own. */
   max-width: 0;
+  box-shadow: inset 3px 0 0 var(--teal);
 }
 
 .detail {
-  padding: 18px 20px 22px 50px;
+  padding: var(--s5) var(--s5) var(--s6) var(--s10);
   display: grid;
-  gap: 16px;
+  gap: var(--s4);
 }
 
 /* The other half of the same problem. A grid item defaults to
@@ -406,8 +788,8 @@ a:hover {
 
 .facts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-  gap: 12px 20px;
+  grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+  gap: var(--s3) var(--s5);
   margin: 0;
 }
 
@@ -416,102 +798,223 @@ a:hover {
 }
 
 .facts dt {
-  font-size: 11px;
-  letter-spacing: 0.07em;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--faint);
   margin-bottom: 2px;
 }
 
 .facts dd {
   margin: 0;
-  font-size: 14px;
+  font-size: 13.5px;
   overflow-wrap: anywhere;
 }
 
 .panel {
-  background: var(--panel);
+  background: var(--surface-1);
   border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 14px 16px;
+  border-radius: var(--r-md);
+  padding: var(--s4);
 }
 
 .panel h3 {
-  margin: 0 0 8px;
-  font-size: 11px;
-  letter-spacing: 0.08em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 var(--s2);
+  font-size: 10.5px;
+  letter-spacing: 0.09em;
   text-transform: uppercase;
-  color: var(--muted);
+  color: var(--faint);
+  font-weight: 600;
 }
 
 .panel-memory {
-  border-color: rgba(167, 139, 250, 0.34);
-  background: rgba(167, 139, 250, 0.06);
+  border-color: rgba(167, 139, 250, 0.32);
+  background: rgba(167, 139, 250, 0.05);
 }
 
 .panel-memory h3 {
-  color: #c4b5fd;
+  color: var(--violet-text);
 }
 
 .panel p {
   margin: 0;
+  font-size: 14px;
 }
 
 .panel p + p {
-  margin-top: 8px;
+  margin-top: var(--s2);
 }
 
 .prose {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  line-height: 1.6;
 }
 
 .log {
   margin: 0;
-  padding: 12px;
-  background: #0b0f15;
+  padding: var(--s3);
+  background: #05070b;
   border: 1px solid var(--line);
-  border-radius: 8px;
-  font-size: 12.5px;
-  line-height: 1.5;
-  color: #cbd5e1;
+  border-radius: var(--r-sm);
+  font-size: 12px;
+  line-height: 1.55;
+  color: #c3d0e0;
   /* Logs contain long lines. Scroll the block, never the page. */
   overflow-x: auto;
   max-height: 340px;
   overflow-y: auto;
   white-space: pre;
+  tab-size: 2;
 }
 
-/* --- states ------------------------------------------------------------ */
+/* ---------------------------------------------------------------------- *
+ * Loading, empty and error states
+ * ---------------------------------------------------------------------- */
 
 .alert {
-  background: rgba(251, 113, 133, 0.09);
-  border: 1px solid rgba(251, 113, 133, 0.34);
-  border-radius: var(--radius);
-  padding: 14px 16px;
-  margin-bottom: 24px;
+  display: flex;
+  gap: var(--s3);
+  background: rgba(251, 113, 133, 0.07);
+  border: 1px solid rgba(251, 113, 133, 0.32);
+  border-radius: var(--r-lg);
+  padding: var(--s4) var(--s5);
+  margin-bottom: var(--s6);
+}
+
+.alert-icon {
+  color: var(--coral);
+  flex: none;
+  margin-top: 2px;
 }
 
 .alert p {
-  margin: 6px 0 0;
+  margin: var(--s1) 0 0;
+  font-size: 13.5px;
 }
 
 .alert code {
   background: rgba(255, 255, 255, 0.06);
   padding: 1px 5px;
   border-radius: 4px;
+  font-size: 12.5px;
 }
 
 .empty {
+  display: grid;
+  place-items: center;
+  gap: var(--s3);
   color: var(--muted);
-  padding: 28px 0;
+  text-align: center;
+  padding: var(--s12) var(--s5);
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--r-lg);
+}
+
+.empty svg {
+  color: var(--faint);
+}
+
+.empty p {
+  margin: 0;
+  max-width: 42ch;
+  font-size: 14px;
 }
 
 .foot {
-  color: var(--muted);
-  font-size: 13px;
-  margin-top: 12px;
+  color: var(--faint);
+  font-size: 12.5px;
+  margin-top: var(--s3);
 }
+
+/* Skeletons rather than the word "Loading". A block roughly the shape of
+   the thing that is coming tells the reader what to expect and stops the
+   layout jumping when it lands. */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--surface-2) 25%,
+    var(--surface-3) 37%,
+    var(--surface-2) 63%
+  );
+  background-size: 400% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: var(--r-sm);
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+
+.sk-card {
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: var(--s5);
+  display: grid;
+  gap: var(--s3);
+}
+
+.sk-rows {
+  background: var(--surface-1);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  padding: var(--s3) var(--s4);
+  display: grid;
+  gap: var(--s3);
+}
+
+.sk-line {
+  height: 12px;
+}
+
+/* Cards arrive one after another rather than all at once. 45ms apart is
+   enough to read as a sequence and short enough that the whole set is on
+   screen well inside a fifth of a second. */
+.enter {
+  animation: rise var(--normal) var(--ease) both;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Visible to a screen reader, invisible on screen. Used for the loading
+   announcement, because a shimmering grey rectangle communicates nothing
+   at all to someone who is not looking at it.
+
+   Not `display: none` and not `visibility: hidden` - both remove the
+   element from the accessibility tree too, which defeats the point. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---------------------------------------------------------------------- *
+ * Responsive
+ * ---------------------------------------------------------------------- */
 
 /* Give the summary column back its space in steps, so a laptop-sized window
  * still fits the whole table without scrolling anything. The wrapper's
@@ -528,5 +1031,58 @@ a:hover {
   }
   .col-summary {
     max-width: 200px;
+  }
+}
+
+@media (max-width: 560px) {
+  .page {
+    padding: var(--s5) var(--s4) var(--s10);
+  }
+  .masthead {
+    gap: var(--s4);
+  }
+  .masthead h1 {
+    font-size: 23px;
+  }
+  .cards {
+    grid-template-columns: 1fr;
+  }
+  .figure {
+    font-size: 29px;
+  }
+  .detail {
+    padding: var(--s4) var(--s4) var(--s5);
+  }
+  /* Below this width the pulse indicator is the first thing that can go -
+     it is reassurance, and the Refresh button next to it is the function. */
+  .pulse-dot {
+    display: none;
+  }
+}
+
+/* ---------------------------------------------------------------------- *
+ * Reduced motion
+ * ---------------------------------------------------------------------- */
+
+/* Motion here is decoration on top of an already-complete page, so when
+ * the operating system says to stop, everything stops. Duration is set to
+ * 0.01ms rather than 0 because some browsers skip the transitionend event
+ * entirely at exactly zero, and code that waits for it would hang. */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  /* The shimmer would freeze mid-gradient and look like a rendering fault,
+     so it becomes a plain flat block instead. */
+  .skeleton {
+    animation: none !important;
+    background: var(--surface-2);
   }
 }
