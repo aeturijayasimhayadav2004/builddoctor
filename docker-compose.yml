@@ -107,6 +107,19 @@ services:
       # container. Not required, but it keeps the Phase 1 behaviour of
       # being able to open logs/run_<id>.txt in an editor.
       - ./logs:/app/logs
+      # Phase 8. The eval suite needs to run WITH the real database, the
+      # real embedding model and the real API key, which means it has to
+      # run in this image - but the image bakes its source in at build
+      # time, so without this mount every edit to a golden case would cost
+      # a rebuild, and eval/report.md would be written inside a container
+      # and die with it.
+      #
+      # The eval itself is read-only (see the module docstring in
+      # run_eval.py: it calls the real classifier node but never the nodes
+      # that post, label or re-run, and it arms landmines over every write
+      # path). This mount is NOT read-only only because the report and the
+      # raw results are written back out to the host.
+      - ./eval:/app/eval
     depends_on:
       postgres:
         # Waits for the healthcheck above to pass, not merely for the

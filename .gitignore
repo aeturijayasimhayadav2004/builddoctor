@@ -15,3 +15,8 @@ logs/
 # watched repository. Runtime data, not source. Replaced by Postgres in
 # Phase 3 but kept until the migration has been run.
 diagnoses.jsonl
+
+# Raw eval results. eval/report.md is the committed artifact; this is the
+# machine-readable form of the same run, rewritten every time run_eval.py
+# is invoked, so committing it would be pure churn.
+eval/last_run.json

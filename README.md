@@ -2,7 +2,7 @@
 
 An agent that watches a GitHub repo and reacts when a CI build fails.
 
-**Current stage: Phase 7.** When a workflow run fails, BuildDoctor fetches the
+**Current stage: Phase 8.** When a workflow run fails, BuildDoctor fetches the
 logs and the triggering diff, **checks whether anything like this has failed
 before**, asks a model what went wrong *and which of three lanes the failure
 belongs in*, then acts on that decision - comment, re-run, or flag for a
@@ -10,6 +10,10 @@ human - and stores the whole thing in Postgres. Those actions are carried out
 by a separate **MCP server**, which the app calls as a client. Everything it
 has ever concluded is visible on a **React dashboard**. Four containers run
 together under `docker compose`.
+
+And it is now **measured** rather than asserted: against a golden set of 24
+failures with known-correct answers, it picks the right lane **22 times out of
+24 (91.7%)**. See [the eval suite](#does-it-actually-work-the-eval-suite).
 
 ## What it does now
 
@@ -28,6 +32,9 @@ together under `docker compose`.
      **and an embedding of the log, so this failure is findable next time**
 4. Every row it has ever written is listed on the **dashboard** at
    <http://localhost:5173>, with no build needed to see it.
+5. A **golden set of 24 known-correct cases** can be run against the real
+   classifier at any time, without touching GitHub or the `diagnoses` table,
+   to check that a change made it better and not worse.
 
 ## The three lanes
 
@@ -107,6 +114,11 @@ get wrong.
 | `Dockerfile` | One image, used by both the app and the MCP server |
 | `docker-compose.yml` | Runs app + mcp + postgres + frontend together |
 | `frontend/` | The React + TypeScript dashboard (Vite). See below |
+| `eval/golden_set.json` | 24 cases with known-correct lanes. The measuring stick |
+| `eval/run_eval.py` | Runs the golden set against the real classifier. Writes nothing |
+| `eval/report.md` | The numbers from the last run. Regenerated every run |
+| `eval/findings.md` | What the numbers mean. Written by hand, survives a re-run |
+| `eval/probe_*.py` | Two read-only probes, kept as evidence for a Phase 8 finding |
 
 ## Memory: has this failed before?
 
@@ -172,29 +184,70 @@ Redelivering a webhook re-processes the same run, and without that exclusion
 the new diagnosis would match the row the previous delivery just wrote, at
 ~1.00, and learn only that it equals itself.
 
-### Known limitation: the untested middle
+### The untested middle, now measured
 
-Carried forward from Phase 6 deliberately, and **not** fixed in Phase 7.
+This was Phase 6's open question and Phase 7 deliberately left it alone.
+**Phase 8 measured it.** The section is kept rather than deleted, because the
+reasoning that made it a question is still the reasoning that makes the answer
+worth trusting.
 
-Every similarity ever measured on real data has landed in one of two clumps:
-about 1.00 when the same fixture failed twice, and 0.83 or below when two
-failures were genuinely unrelated. Nothing has ever scored **between 0.83 and
-0.99**.
+**The question was:** every similarity ever seen on real data had landed in one
+of two clumps - about 1.00 when the same fixture failed twice, and 0.83 or
+below when two failures were genuinely unrelated. Nothing had ever scored
+between 0.83 and 0.99, so the threshold had been proven at its edges and never
+in its middle.
 
-That means the threshold has been proven at its edges and never in its middle.
-If a future failure is *genuinely similar but not identical* and scores, say,
-0.87, it will be silently rejected. That is the intended behaviour - the whole
-argument above is that silence beats a weak hint - but it is a choice made
-without evidence, because no such case has occurred yet.
+**The answer:** six cases were built to be deliberately similar-but-different
+and three of them landed in the empty band. All three should have matched, and
+all three did.
 
-**This is a Phase 8 question.** Measuring it properly needs a labelled set of
-"similar but not identical" failures and a run of the threshold against them,
-which is an eval suite, not a tweak. Changing the number now, on no data,
-would only move the untested gap somewhere else.
+| Case | Score | Should match? | Did it? |
+| ---- | ----- | ------------- | ------- |
+| assertion failure, different file and numbers | 0.9254 | yes | yes |
+| apt missing package, different package name | 0.9431 | yes | yes |
+| `ModuleNotFoundError`, different module | 0.9763 | yes | yes |
+| Node `Cannot find module` vs Python `No module named` | 0.7429 | **no** | no |
+| pip DNS failure vs pip bad-version rows | 0.5687 | **no** | no |
 
-The dashboard makes the raw material visible: every row's similarity is shown
-when memory matched, so the numbers accumulate in plain sight rather than only
-in the logs.
+The numbers that matter:
+
+- highest score that should **not** have matched: **0.8333**
+- lowest score that **should** have matched: **0.9254**
+- the gap between them: **0.0921**, and **0.90 sits inside it**
+
+So the threshold survives its first real test. The gap is far narrower than
+Phase 6's 0.811-to-0.994, which is exactly what should happen once genuinely
+similar-but-different cases exist - but it is still a gap, and 0.90 is still
+inside it rather than balanced on an edge.
+
+**The threshold was not changed.** It did not need to be, and Phase 8's rule
+was to measure, not tune.
+
+### The thing the eval found instead
+
+One middle-zone case failed, and chasing it turned up something more important
+than the threshold.
+
+`pip install requests==999.999.999` scored only **0.7959** against the rows for
+`pip install pytest==99X.X.X` - the same failure, same file, same fix, only the
+package name different. Its nearest neighbour was an unrelated "tests/ not
+found" row.
+
+The cause is not the threshold. When pip rejects a version it prints **every
+version it does know about**, and for those rows that list is 1368 characters.
+The embedding model reads at most 256 word-pieces, so **81% of those rows is
+discarded**, and much of what survives is version numbers rather than the
+failure.
+
+Pasting that same list of version numbers into a completely unrelated failure
+moves it **+0.27 closer** to those rows. Memory is partly matching on
+incidental output volume rather than on the failure.
+
+This is written up in full, with the two probe scripts that prove it, in
+[`eval/findings.md`](eval/findings.md). **It was not fixed** - every candidate
+fix changes `embeddings.clean()`, which changes every stored vector and
+requires a full re-embed and a re-measure. That is a later phase, and the
+golden set now exists to measure it against.
 
 ### How the hint reaches the model
 
@@ -452,6 +505,125 @@ browser console while every container looks perfectly healthy from the inside.
 It is the same lesson as `localhost` vs `postgres` further up this file, seen
 from the other end: there, `localhost` was wrong because the code ran inside a
 container; here, the service name is wrong because the code runs outside one.
+
+## Does it actually work? The eval suite
+
+BuildDoctor scores **22 out of 24 (91.7%)** against a golden set of failures
+with known-correct lanes. Excluding the three cases deliberately written to be
+ambiguous, 20 of 21 (95.2%).
+
+```powershell
+docker compose run --rm --no-deps app python eval/run_eval.py
+```
+
+Takes about ten minutes, and that is a floor rather than slowness - see
+"the rate limit" below. Results land in
+[`eval/report.md`](eval/report.md); the analysis lives in
+[`eval/findings.md`](eval/findings.md).
+
+| Breakdown | Score |
+| --------- | ----- |
+| Overall | 22/24 (91.7%) |
+| Excluding 3 ambiguous cases | 20/21 (95.2%) |
+| `informational` (teal) | 11/12 |
+| `safe_auto_fix` (amber) | **3/3** |
+| `needs_review` (coral) | 8/9 |
+| Live cross-check | **4/4 agree** with what the live pipeline recorded |
+
+The amber row is the one worth pausing on. The database contains **zero**
+examples of `safe_auto_fix` - no watched build has ever failed in a way the
+model judged flaky - so before this eval that lane had never been exercised at
+all. It is now three for three on written cases.
+
+### The golden set
+
+[`eval/golden_set.json`](eval/golden_set.json) holds 24 cases in four groups:
+
+| Group | Count | What it is for |
+| ----- | ----- | -------------- |
+| historical | 6 | Real excerpts from rows 1-13, verbatim |
+| synthetic | 8 | Each lane covered clearly, including 2 deliberately ambiguous |
+| middle-zone | 6 | Similar-but-different pairs, to probe the memory threshold |
+| live-crosscheck | 4 | Replays of real runs, scored against what the live pipeline stored |
+
+**The stored lane is not the expected lane, and that distinction is the whole
+point.** Every `expected_lane` is derived by hand from `diagnose.py`'s own
+STEP 1-5 and carries a `lane_rationale` naming the step it came from. What the
+database recorded is kept separately as `recorded_lane`.
+
+That is not pedantry. Rows 5 and 9-12 are the *same failure* - a pytest version
+pinned in `ci.yml` that does not exist - and row 5 is stored as `needs_review`
+while 9-12 are stored as `informational`. Scoring against stored lanes would
+have measured whether the model agrees with its own past self, which is not the
+same question as whether it is right. (Replaying row 5 today returns
+`informational`, matching the others. The prompt was sharpened in between.)
+
+### Calling the real thing without real side effects
+
+The usual way to build a harness like this is to reimplement the interesting
+part and then measure the reimplementation, which produces a number about the
+test rather than about the system. Nothing here is reimplemented.
+
+The eval calls **`graph.classify(state)`** - not a copy of it, the actual
+LangGraph node the live pipeline runs, with the real prompt and the real rerun
+guard. It is safe for a structural reason rather than a careful one: posting,
+labelling and re-running do not live in `classify()`. They live in three
+*sibling* nodes that only execute when the compiled graph routes to them.
+Calling the node directly means routing never happens, so that code is never
+entered. The eval is not avoiding the side effects - it never reaches the code
+that has them.
+
+It also calls **`memory.search_past_failures(...)`**, the real lookup with the
+real threshold, alongside `db.nearest_by_embedding` to capture the raw scores
+that the gated function discards when it rejects a match.
+
+On top of that, `install_write_landmines()` replaces every write path in the
+process - `db.save_diagnosis`, `db.set_embedding`, and all of `mcp_client`'s
+posting functions - with functions that **raise**. Deliberately not mocks: a
+mock returns something plausible and lets execution continue, which is exactly
+how a harness ends up posting to a real repository while its author is certain
+it cannot. None of them fired.
+
+So there are two independent reasons nothing can happen: the code is never
+reached, and it would explode if it were.
+
+### The rate limit
+
+Groq's free tier allows 8000 tokens per minute for this model, and one case
+costs 1900-3350 prompt tokens because CI logs are long. That caps the whole
+thing at roughly two and a half cases per minute.
+
+The first run used three concurrent requests and no backoff. **Ten of 24 cases
+came back 429**, were dropped, and the script printed a confident accuracy
+computed over the surviving 14 - the most dangerous shape a test can have. The
+harness now paces one request every 24 seconds and waits out the delay the
+provider names.
+
+`diagnose.py` was not touched for this. Being rate limited is a property of
+running 24 cases in a burst against a free tier, so the retry lives in the
+harness that is being limited.
+
+### Triggering a genuinely live run
+
+The `live-crosscheck` group replays real excerpts and compares against what the
+pipeline stored, which proves the eval path and the live path agree. It does
+**not** re-test webhook delivery, evidence gathering or posting. Doing that
+needs a real broken build, which is a manual job:
+
+1. `docker compose up` and confirm all four containers are healthy.
+2. In a second terminal, `ngrok http 8000`, and copy the `https://` URL.
+3. In the watched repository's **Settings > Webhooks**, set the payload URL to
+   `<ngrok-url>/webhook`, content type `application/json`, secret matching
+   `WEBHOOK_SECRET` in `.env`, and subscribe to **Workflow runs** only.
+4. Push a commit that breaks the build. The simplest is one line in
+   `.github/workflows/ci.yml`: change `pip install pytest` to
+   `pip install pytest==997.997.997`.
+5. Watch the app container's logs. Expect `memory:` then `[classify]` then one
+   of `[teal]` / `[amber]` / `[coral]`.
+6. The new row appears on the dashboard at <http://localhost:5173>.
+
+Note that ngrok issues a **new URL every restart** on the free tier, so step 3
+has to be redone each session.
 
 ## The MCP server
 

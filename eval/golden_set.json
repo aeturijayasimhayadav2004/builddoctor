@@ -1,0 +1,378 @@
+{
+  "version": 1,
+  "generated_for": "BuildDoctor Phase 8",
+  "notes": [
+    "expected_lane is derived by hand from diagnose.py's STEP 1-5, not copied from what the database recorded. Where the two differ, the case says so in lane_rationale.",
+    "Historical and live-crosscheck cases use REAL log excerpts, verbatim. Their diffs are reconstructed from diff_summary, because the pipeline stores which files changed but never the diff text.",
+    "expected_memory.confidence is 'guess' on every middle-zone case. Those are predictions to be tested, not ground truth."
+  ],
+  "cases": [
+    {
+      "id": "hist-01",
+      "group": "historical",
+      "description": "A test asserts 1 + 1 == 3. The diff added that test.",
+      "source_row": 1,
+      "recorded_lane": null,
+      "log_excerpt": "### job: test\n--- log lines 167-182 of 189 ---\n\ntests/test_math.py:2: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_math.py::test_addition - assert (1 + 1) == 3\n============================== 1 failed in 0.02s ===============================\n##[error]Process completed with exit code 1.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/9702d54a-ff30-4ab3-8b2b-e9003840fd8e' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/tests/test_math.py b/tests/test_math.py\n--- a/tests/test_math.py\n+++ b/tests/test_math.py\n@@ -1,2 +1,4 @@\n def test_subtraction():\n     assert 2 - 1 == 1\n+\n+def test_addition():\n+    assert 1 + 1 == 3\n",
+      "expected_lane": "needs_review",
+      "lane_rationale": "STEP 4. The one file to edit is tests/test_math.py, which is test code, and the assertion itself is wrong. Not machinery, not flaky.",
+      "ambiguous": false,
+      "expected_memory": null
+    },
+    {
+      "id": "hist-02",
+      "group": "historical",
+      "description": "pytest cannot find tests/ at all. The diff only touched ci.yml.",
+      "source_row": 2,
+      "recorded_lane": null,
+      "log_excerpt": "### job: test\n--- log lines 156-171 of 178 ---\nERROR: file or directory not found: tests/\ncollecting ... collected 0 items\n\n============================ no tests ran in 0.00s =============================\n\n##[error]Process completed with exit code 4.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/6dd484f8-cf00-4367-b885-f34a2454b1a8' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -22,4 +22,4 @@ jobs:\n       - name: Run tests\n-        run: pytest\n+        run: pytest tests/ -v\n",
+      "expected_lane": "informational",
+      "ambiguous": true,
+      "lane_rationale": "STEP 2. The change that broke it is in .github/workflows/ci.yml - it started pointing pytest at a directory that does not exist. AMBIGUOUS: a reasonable engineer could say the real fix is to create tests/, which would be source code and STEP 4.",
+      "expected_memory": null
+    },
+    {
+      "id": "hist-03",
+      "group": "historical",
+      "description": "A new test imports app.settings; the repo has no app package.",
+      "source_row": 4,
+      "recorded_lane": null,
+      "log_excerpt": "### job: test\n--- log lines 168-183 of 190 ---\nE   ModuleNotFoundError: No module named 'app'\n=========================== short test summary info ============================\nERROR tests/test_config.py\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n=============================== 1 error in 0.11s ===============================\n##[error]Process completed with exit code 2.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/219d62da-7398-435c-b39c-fc92566a3061' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/tests/test_config.py b/tests/test_config.py\nnew file mode 100644\n--- /dev/null\n+++ b/tests/test_config.py\n@@ -0,0 +1,5 @@\n+from app.settings import DEBUG\n+\n+\n+def test_debug_is_off():\n+    assert DEBUG is False\n",
+      "expected_lane": "needs_review",
+      "lane_rationale": "STEP 4, which names this case explicitly: an import of a module the project is supposed to contain but does not.",
+      "ambiguous": false,
+      "expected_memory": null
+    },
+    {
+      "id": "hist-04",
+      "group": "historical",
+      "description": "ci.yml pins pytest==999.999.999, which does not exist.",
+      "source_row": 5,
+      "recorded_lane": "needs_review",
+      "log_excerpt": "### job: test\n--- log lines 133-148 of 155 ---\n  LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib\n##[endgroup]\nERROR: Ignored the following yanked versions: 8.1.0\nERROR: Could not find a version that satisfies the requirement pytest==999.999.999 (from versions: 2.0.0, 2.0.1, 2.0.2, 2.0.3, 2.1.0, 2.1.1, 2.1.2, 2.1.3, 2.2.0, 2.2.1, 2.2.2, 2.2.3, 2.2.4, 2.3.0, 2.3.1, 2.3.2, 2.3.3, 2.3.4, 2.3.5, 2.4.0, 2.4.1, 2.4.2, 2.5.0, 2.5.1, 2.5.2, 2.6.0, 2.6.1, 2.6.2, 2.6.3, 2.6.4, 2.7.0, 2.7.1, 2.7.2, 2.7.3, 2.8.0, 2.8.1, 2.8.2, 2.8.3, 2.8.4, 2.8.5, 2.8.6, 2.8.7, 2.9.0, 2.9.1, 2.9.2, 3.0.0, 3.0.1, 3.0.2, 3.0.3, 3.0.4, 3.0.5, 3.0.6, 3.0.7, 3.1.0, 3.1.1, 3.1.2, 3.1.3, 3.2.0, 3.2.1, 3.2.2, 3.2.3, 3.2.4, 3.2.5, 3.3.0, 3.3.1, 3.3.2, 3.4.0, 3.4.1, 3.4.2, 3.5.0, 3.5.1, 3.6.0, 3.6.1, 3.6.2, 3.6.3, 3.6.4, 3.7.0, 3.7.1, 3.7.2, 3.7.3, 3.7.4, 3.8.0, 3.8.1, 3.8.2, 3.9.1, 3.9.2, 3.9.3, 3.10.0, 3.10.1, 4.0.0, 4.0.1, 4.0.2, 4.1.0, 4.1.1, 4.2.0, 4.2.1, 4.3.0, 4.3.1, 4.4.0, 4.4.1, 4.4.2, 4.5.0, 4.6.0, 4.6.1, 4.6.2, 4.6.3, 4.6.4, 4.6.5, 4.6.6, 4.6.7, 4.6.8, 4.6.9, 4.6.10, 4.6.11, 5.0.0, 5.0.1, 5.1.0, 5.1.1, 5.1.2, 5.1.3, 5.2.0, 5.2.1, 5.2.2, 5.2.3, 5.2.4, 5.3.0, 5.3.1, 5.3.2, 5.3.3, 5.3.4, 5.3.5, 5.4.0, 5.4.1, 5.4.2, 5.4.3, 6.0.0rc1, 6.0.0, 6.0.1, 6.0.2, 6.1.0, 6.1.1, 6.1.2, 6.2.0, 6.2.1, 6.2.2, 6.2.3, 6.2.4, 6.2.5, 7.0.0rc1, 7.0.0, 7.0.1, 7.1.0, 7.1.1, 7.1.2, 7.1.3, 7.2.0, 7.2.1, 7.2.2, 7.3.0, 7.3.1, 7.3.2, 7.4.0, 7.4.1, 7.4.2, 7.4.3, 7.4.4, 8.0.0rc1, 8.0.0rc2, 8.0.0, 8.0.1, 8.0.2, 8.1.1, 8.1.2, 8.2.0, 8.2.1, 8.2.2, 8.3.0, 8.3.1, 8.3.2, 8.3.3, 8.3.4, 8.3.5, 8.4.0, 8.4.1, 8.4.2, 9.0.0, 9.0.1, 9.0.2, 9.0.3, 9.1.0, 9.1.1)\nERROR: No matching distribution found for pytest==999.999.999\n##[error]Process completed with exit code 1.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/5b3c8143-8791-4116-aabc-a666288f90f5' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -18,3 +18,4 @@ jobs:\n       - name: Install deps\n-        run: pip install pytest\n+        run: pip install pytest==999.999.999\n",
+      "expected_lane": "informational",
+      "lane_rationale": "STEP 2, and the step spells this exact case out: 'a pinned version that does not exist' in CI machinery is informational however obviously wrong it is. NOTE: the database recorded needs_review for this row, which is the disagreement this case exists to expose.",
+      "ambiguous": false,
+      "expected_memory": null
+    },
+    {
+      "id": "hist-05",
+      "group": "historical",
+      "description": "ci.yml pins pytest==998.998.998. Same class as hist-04.",
+      "source_row": 10,
+      "recorded_lane": "informational",
+      "log_excerpt": "### job: test\n--- log lines 134-149 of 156 ---\n  LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib\n##[endgroup]\nERROR: Ignored the following yanked versions: 8.1.0\nERROR: Could not find a version that satisfies the requirement pytest==998.998.998 (from versions: 2.0.0, 2.0.1, 2.0.2, 2.0.3, 2.1.0, 2.1.1, 2.1.2, 2.1.3, 2.2.0, 2.2.1, 2.2.2, 2.2.3, 2.2.4, 2.3.0, 2.3.1, 2.3.2, 2.3.3, 2.3.4, 2.3.5, 2.4.0, 2.4.1, 2.4.2, 2.5.0, 2.5.1, 2.5.2, 2.6.0, 2.6.1, 2.6.2, 2.6.3, 2.6.4, 2.7.0, 2.7.1, 2.7.2, 2.7.3, 2.8.0, 2.8.1, 2.8.2, 2.8.3, 2.8.4, 2.8.5, 2.8.6, 2.8.7, 2.9.0, 2.9.1, 2.9.2, 3.0.0, 3.0.1, 3.0.2, 3.0.3, 3.0.4, 3.0.5, 3.0.6, 3.0.7, 3.1.0, 3.1.1, 3.1.2, 3.1.3, 3.2.0, 3.2.1, 3.2.2, 3.2.3, 3.2.4, 3.2.5, 3.3.0, 3.3.1, 3.3.2, 3.4.0, 3.4.1, 3.4.2, 3.5.0, 3.5.1, 3.6.0, 3.6.1, 3.6.2, 3.6.3, 3.6.4, 3.7.0, 3.7.1, 3.7.2, 3.7.3, 3.7.4, 3.8.0, 3.8.1, 3.8.2, 3.9.1, 3.9.2, 3.9.3, 3.10.0, 3.10.1, 4.0.0, 4.0.1, 4.0.2, 4.1.0, 4.1.1, 4.2.0, 4.2.1, 4.3.0, 4.3.1, 4.4.0, 4.4.1, 4.4.2, 4.5.0, 4.6.0, 4.6.1, 4.6.2, 4.6.3, 4.6.4, 4.6.5, 4.6.6, 4.6.7, 4.6.8, 4.6.9, 4.6.10, 4.6.11, 5.0.0, 5.0.1, 5.1.0, 5.1.1, 5.1.2, 5.1.3, 5.2.0, 5.2.1, 5.2.2, 5.2.3, 5.2.4, 5.3.0, 5.3.1, 5.3.2, 5.3.3, 5.3.4, 5.3.5, 5.4.0, 5.4.1, 5.4.2, 5.4.3, 6.0.0rc1, 6.0.0, 6.0.1, 6.0.2, 6.1.0, 6.1.1, 6.1.2, 6.2.0, 6.2.1, 6.2.2, 6.2.3, 6.2.4, 6.2.5, 7.0.0rc1, 7.0.0, 7.0.1, 7.1.0, 7.1.1, 7.1.2, 7.1.3, 7.2.0, 7.2.1, 7.2.2, 7.3.0, 7.3.1, 7.3.2, 7.4.0, 7.4.1, 7.4.2, 7.4.3, 7.4.4, 8.0.0rc1, 8.0.0rc2, 8.0.0, 8.0.1, 8.0.2, 8.1.1, 8.1.2, 8.2.0, 8.2.1, 8.2.2, 8.3.0, 8.3.1, 8.3.2, 8.3.3, 8.3.4, 8.3.5, 8.4.0, 8.4.1, 8.4.2, 9.0.0, 9.0.1, 9.0.2, 9.0.3, 9.1.0, 9.1.1)\nERROR: No matching distribution found for pytest==998.998.998\n##[error]Process completed with exit code 1.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/a175957e-46b4-4f08-abd7-20f2e444aa57' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -18,3 +18,3 @@ jobs:\n       - name: Install deps\n-        run: pip install pytest\n+        run: pip install pytest==998.998.998\n",
+      "expected_lane": "informational",
+      "lane_rationale": "STEP 2. Identical reasoning to hist-04, and history agrees here.",
+      "ambiguous": false,
+      "expected_memory": null
+    },
+    {
+      "id": "hist-06",
+      "group": "historical",
+      "description": "apt-get cannot locate libgdal-does-not-exist, added by ci.yml.",
+      "source_row": 13,
+      "recorded_lane": "informational",
+      "log_excerpt": "### job: test\n--- log lines 132-147 of 154 ---\n##[endgroup]\nReading package lists...\nBuilding dependency tree...\nReading state information...\nE: Unable to locate package libgdal-does-not-exist\n##[error]Process completed with exit code 100.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/bad0faf4-4855-469c-80db-d0cd5ae280ca' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -12,6 +12,8 @@ jobs:\n       - uses: actions/checkout@v4\n+      - name: Install system deps\n+        run: sudo apt-get update && sudo apt-get install -y libgdal-does-not-exist\n",
+      "expected_lane": "informational",
+      "lane_rationale": "STEP 2. A workflow file installing a package that does not exist.",
+      "ambiguous": false,
+      "expected_memory": null
+    },
+    {
+      "id": "syn-01",
+      "group": "synthetic",
+      "description": "A secret scanner finds a hardcoded AWS key in the diff.",
+      "log_excerpt": "### job: security-scan\n--- log lines 88-103 of 118 ---\nRun gitleaks detect --source . --verbose\nFinding:     aws_access_key_id = \"AKIAIOSFODNN7EXAMPLE\"\nSecret:      AKIAIOSFODNN7EXAMPLE\nRuleID:      aws-access-token\nEntropy:     3.684210\nFile:        src/uploader.py\nLine:        14\nCommit:      4f2c1ab\n1 leak found\n##[error]Process completed with exit code 1.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/9702d54a-ff30-4ab3-8b2b-e9003840fd8e' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/src/uploader.py b/src/uploader.py\n--- a/src/uploader.py\n+++ b/src/uploader.py\n@@ -11,6 +11,8 @@ import boto3\n def client():\n-    return boto3.client(\"s3\")\n+    aws_access_key_id = \"AKIAIOSFODNN7EXAMPLE\"\n+    aws_secret_access_key = \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"\n+    return boto3.client(\"s3\", aws_access_key_id=aws_access_key_id,\n+                        aws_secret_access_key=aws_secret_access_key)\n",
+      "expected_lane": "needs_review",
+      "lane_rationale": "STEP 1. Credentials. Stops at the first step, before anything else is considered.",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_memory": null
+    },
+    {
+      "id": "syn-02",
+      "group": "synthetic",
+      "description": "pip times out reaching pypi.org. The diff only edited the README.",
+      "log_excerpt": "### job: test\n--- log lines 41-56 of 71 ---\nRun pip install -r requirements.txt\nCollecting fastapi==0.115.0\nWARNING: Retrying (Retry(total=4, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ReadTimeoutError(\"HTTPSConnectionPool(host='pypi.org', port=443): Read timed out. (read timeout=15)\")': /simple/fastapi/\nWARNING: Retrying (Retry(total=3, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ReadTimeoutError(\"HTTPSConnectionPool(host='pypi.org', port=443): Read timed out. (read timeout=15)\")': /simple/fastapi/\nWARNING: Retrying (Retry(total=2, connect=None, read=None, redirect=None, status=None)) after connection broken by 'ReadTimeoutError(\"HTTPSConnectionPool(host='pypi.org', port=443): Read timed out. (read timeout=15)\")': /simple/fastapi/\nERROR: Could not install packages due to an OSError: HTTPSConnectionPool(host='pypi.org', port=443): Read timed out.\n##[error]Process completed with exit code 2.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/9702d54a-ff30-4ab3-8b2b-e9003840fd8e' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -3,3 +3,4 @@\n A small service.\n+\n+Run the tests with `pytest`.\n",
+      "expected_lane": "safe_auto_fix",
+      "lane_rationale": "STEP 3. A read timeout to an external host, and a README edit cannot possibly have caused it. Re-running unchanged is genuinely likely to pass.",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_memory": null
+    },
+    {
+      "id": "syn-03",
+      "group": "synthetic",
+      "description": "The runner was deprovisioned mid-job. Nothing to do with the code.",
+      "log_excerpt": "### job: test\n--- log lines 12-27 of 39 ---\nRun pytest -q\ntests/test_api.py ....\n##[error]The self-hosted runner: gh-runner-04 lost communication with the server.\nVerify the machine is running and has a healthy network connection.\nAnything in your workflow that terminates the runner process, starves it for\nCPU/Memory, or blocks its network access can cause this error.\n##[error]The operation was canceled.\n##[error]Process completed with exit code 143.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/9702d54a-ff30-4ab3-8b2b-e9003840fd8e' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/src/api.py b/src/api.py\n--- a/src/api.py\n+++ b/src/api.py\n@@ -20,3 +20,3 @@ def health():\n-    return {\"ok\": True}\n+    return {\"ok\": True, \"version\": VERSION}\n",
+      "expected_lane": "safe_auto_fix",
+      "lane_rationale": "STEP 3. A runner/infrastructure error. The tests that ran passed; the machine went away.",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_memory": null
+    },
+    {
+      "id": "syn-04",
+      "group": "synthetic",
+      "description": "The Dockerfile asks for a base image tag that does not exist.",
+      "log_excerpt": "### job: build\n--- log lines 8-21 of 33 ---\nRun docker build -t app:ci .\n#1 [internal] load build definition from Dockerfile\n#2 [internal] load metadata for docker.io/library/python:3.99-slim\n#2 ERROR: docker.io/library/python:3.99-slim: not found\n------\n > [internal] load metadata for docker.io/library/python:3.99-slim:\n------\nERROR: failed to solve: python:3.99-slim: not found\n##[error]Process completed with exit code 1.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/9702d54a-ff30-4ab3-8b2b-e9003840fd8e' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/Dockerfile b/Dockerfile\n--- a/Dockerfile\n+++ b/Dockerfile\n@@ -1,2 +1,2 @@\n-FROM python:3.12-slim\n+FROM python:3.99-slim\n WORKDIR /app\n",
+      "expected_lane": "informational",
+      "lane_rationale": "STEP 2. A Dockerfile is named in the step as build machinery.",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_memory": null
+    },
+    {
+      "id": "syn-05",
+      "group": "synthetic",
+      "description": "Source logic returns the wrong greeting; the test is correct.",
+      "log_excerpt": "### job: test\n--- log lines 150-165 of 181 ---\n    def test_greeting():\n        result = greet(\"Ada\")\n>       assert result == \"Hello, Ada!\"\nE       AssertionError: assert 'Hi, Ada!' == 'Hello, Ada!'\nE         - Hello, Ada!\nE         + Hi, Ada!\n\ntests/test_greeting.py:7: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_greeting.py::test_greeting - AssertionError: assert 'Hi, Ada!...\n============================== 1 failed in 0.03s ===============================\n##[error]Process completed with exit code 1.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/9702d54a-ff30-4ab3-8b2b-e9003840fd8e' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/src/greeting.py b/src/greeting.py\n--- a/src/greeting.py\n+++ b/src/greeting.py\n@@ -1,2 +1,2 @@\n def greet(name):\n-    return f\"Hello, {name}!\"\n+    return f\"Hi, {name}!\"\n",
+      "expected_lane": "needs_review",
+      "lane_rationale": "STEP 4. The one file to edit is src/greeting.py - program behaviour changed and broke a correct test.",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_memory": null
+    },
+    {
+      "id": "syn-06",
+      "group": "synthetic",
+      "description": "package.json names a package that is not on the npm registry.",
+      "log_excerpt": "### job: build\n--- log lines 30-44 of 58 ---\nRun npm ci\nnpm ERR! code E404\nnpm ERR! 404 Not Found - GET https://registry.npmjs.org/leftpadd - Not found\nnpm ERR! 404\nnpm ERR! 404  'leftpadd@^1.0.0' is not in this registry.\nnpm ERR! 404 Note that you can also install from a tarball, folder, http url, or git url.\nnpm ERR! A complete log of this run can be found in: /home/runner/.npm/_logs/2026-08-26T09_12_44_881Z-debug-0.log\n##[error]Process completed with exit code 1.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/9702d54a-ff30-4ab3-8b2b-e9003840fd8e' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/package.json b/package.json\n--- a/package.json\n+++ b/package.json\n@@ -6,6 +6,7 @@\n   \"dependencies\": {\n     \"express\": \"^4.19.2\",\n+    \"leftpadd\": \"^1.0.0\"\n   }\n",
+      "expected_lane": "informational",
+      "lane_rationale": "STEP 2. package.json is dependency machinery, in the same family as requirements.txt, and a typo'd package name is the npm version of a version pin that does not exist.",
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_memory": null
+    },
+    {
+      "id": "syn-07",
+      "group": "synthetic",
+      "description": "A newly added test asserts on wall-clock timing and fails.",
+      "log_excerpt": "### job: test\n--- log lines 140-156 of 172 ---\n    def test_cache_is_fast():\n        start = time.perf_counter()\n        cache.get(\"k\")\n        elapsed = time.perf_counter() - start\n>       assert elapsed < 0.001\nE       assert 0.0034129999 < 0.001\n\ntests/test_cache.py:11: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_cache.py::test_cache_is_fast - assert 0.0034129999 < 0.001\n============================== 1 failed in 0.09s ===============================\n##[error]Process completed with exit code 1.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/9702d54a-ff30-4ab3-8b2b-e9003840fd8e' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/tests/test_cache.py b/tests/test_cache.py\nnew file mode 100644\n--- /dev/null\n+++ b/tests/test_cache.py\n@@ -0,0 +1,12 @@\n+import time\n+\n+from src.cache import cache\n+\n+\n+def test_cache_is_fast():\n+    start = time.perf_counter()\n+    cache.get(\"k\")\n+    elapsed = time.perf_counter() - start\n+    assert elapsed < 0.001\n",
+      "expected_lane": "needs_review",
+      "ambiguous": true,
+      "lane_rationale": "GENUINELY AMBIGUOUS, and the interesting kind. STEP 3 lists 'a test that depends on timing' as a flaky sign, which points at safe_auto_fix. But STEP 3 also requires that nothing in the diff plausibly explains the failure, and here the diff ADDED the timing-dependent test - so STEP 3 does not apply and STEP 4 does. Re-running would sometimes pass, which is exactly why it is a bad test rather than a flaky one. I expect needs_review; safe_auto_fix is a defensible answer and should be read as a near miss.",
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_memory": null
+    },
+    {
+      "id": "syn-08",
+      "group": "synthetic",
+      "description": "The workflow token lacks permission to comment on the PR.",
+      "log_excerpt": "### job: comment\n--- log lines 55-68 of 80 ---\nRun actions/github-script@v7\nRequestError [HttpError]: Resource not accessible by integration\n    at /home/runner/work/_actions/actions/github-script/v7/dist/index.js:9537:21\n    status: 403,\n    response: {\n      url: 'https://api.github.com/repos/acme/widget/issues/42/comments',\n      status: 403,\n      data: { message: 'Resource not accessible by integration' }\n    }\n##[error]Unhandled error: HttpError: Resource not accessible by integration\n##[error]Process completed with exit code 1.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/9702d54a-ff30-4ab3-8b2b-e9003840fd8e' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -5,8 +5,6 @@ on:\n   pull_request:\n\n-permissions:\n-  pull-requests: write\n-  contents: read\n-\n jobs:\n",
+      "expected_lane": "needs_review",
+      "ambiguous": true,
+      "lane_rationale": "GENUINELY AMBIGUOUS. STEP 1 names permissions and stops there, which gives needs_review. But the one file to edit is ci.yml, which is exactly what STEP 2 calls machinery - and STEP 2 would give informational. The prompt resolves it by order: STEP 1 runs first and says stop. I expect needs_review, and informational is the reasonable disagreement.",
+      "source_row": null,
+      "recorded_lane": null,
+      "expected_memory": null
+    },
+    {
+      "id": "mid-01",
+      "group": "middle-zone",
+      "description": "Same missing-version failure as rows 9-12, different package (requests).",
+      "log_excerpt": "### job: test\n--- log lines 134-149 of 156 ---\n  LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib\n##[endgroup]\nERROR: Ignored the following yanked versions: 2.16.0\nERROR: Could not find a version that satisfies the requirement requests==999.999.999 (from versions: 2.0.0, 2.0.1, 2.1.0, 2.2.1, 2.31.0, 2.32.3)\nERROR: No matching distribution found for requests==999.999.999\n##[error]Process completed with exit code 1.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/9702d54a-ff30-4ab3-8b2b-e9003840fd8e' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -18,3 +18,3 @@ jobs:\n       - name: Install deps\n-        run: pip install pytest requests\n+        run: pip install pytest requests==999.999.999\n",
+      "expected_lane": "informational",
+      "lane_rationale": "STEP 2. A version pin that does not exist, in ci.yml.",
+      "expected_memory": {
+        "verdict": "should_match",
+        "against_rows": [
+          9,
+          10,
+          11,
+          12
+        ],
+        "confidence": "guess",
+        "why": "Identical failure mode, identical fix shape, identical file. Only the package name differs. A past diagnosis of the pytest version would genuinely help here, so a hint would be welcome. GUESS: I expect roughly 0.90-0.97 - high, but below the ~1.00 the true pairs have scored so far, because the package name is a real token difference."
+      },
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null
+    },
+    {
+      "id": "mid-02",
+      "group": "middle-zone",
+      "description": "Same apt failure as row 13, different package name.",
+      "log_excerpt": "### job: test\n--- log lines 132-147 of 154 ---\n##[endgroup]\nReading package lists...\nBuilding dependency tree...\nReading state information...\nE: Unable to locate package libproj-not-real\n##[error]Process completed with exit code 100.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/9702d54a-ff30-4ab3-8b2b-e9003840fd8e' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -12,6 +12,8 @@ jobs:\n       - uses: actions/checkout@v4\n+      - name: Install system deps\n+        run: sudo apt-get update && sudo apt-get install -y libproj-not-real\n",
+      "expected_lane": "informational",
+      "lane_rationale": "STEP 2. Same shape as hist-06.",
+      "expected_memory": {
+        "verdict": "should_match",
+        "against_rows": [
+          13
+        ],
+        "confidence": "guess",
+        "why": "The two logs differ in one token: the package name. Row 13's diagnosis transfers almost word for word. GUESS: very high, possibly 0.95+, which would put it above the threshold. If this one lands BELOW 0.90 the threshold is too strict."
+      },
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null
+    },
+    {
+      "id": "mid-03",
+      "group": "middle-zone",
+      "description": "Same ModuleNotFoundError shape as rows 4/6/7/8, different module and file.",
+      "log_excerpt": "### job: test\n--- log lines 168-183 of 190 ---\nE   ModuleNotFoundError: No module named 'utils'\n=========================== short test summary info ============================\nERROR tests/test_helpers.py\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n=============================== 1 error in 0.09s ===============================\n##[error]Process completed with exit code 2.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/9702d54a-ff30-4ab3-8b2b-e9003840fd8e' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/tests/test_helpers.py b/tests/test_helpers.py\nnew file mode 100644\n--- /dev/null\n+++ b/tests/test_helpers.py\n@@ -0,0 +1,5 @@\n+from utils.strings import slugify\n+\n+\n+def test_slugify():\n+    assert slugify(\"A B\") == \"a-b\"\n",
+      "expected_lane": "needs_review",
+      "lane_rationale": "STEP 4. An import of a module the project should contain but does not.",
+      "expected_memory": {
+        "verdict": "should_match",
+        "against_rows": [
+          4,
+          6,
+          7,
+          8
+        ],
+        "confidence": "guess",
+        "why": "Same error class, same fix shape - create the package or fix the import. Two tokens differ: the module name and the test file name. GUESS: high, 0.90-0.97. A hint here would help."
+      },
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null
+    },
+    {
+      "id": "mid-04",
+      "group": "middle-zone",
+      "description": "Same assertion-failure shape as rows 1/3, different numbers and file.",
+      "log_excerpt": "### job: test\n--- log lines 167-182 of 189 ---\n\ntests/test_arith.py:2: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_arith.py::test_multiplication - assert (2 * 2) == 5\n============================== 1 failed in 0.02s ===============================\n##[error]Process completed with exit code 1.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/9702d54a-ff30-4ab3-8b2b-e9003840fd8e' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/tests/test_arith.py b/tests/test_arith.py\nnew file mode 100644\n--- /dev/null\n+++ b/tests/test_arith.py\n@@ -0,0 +1,2 @@\n+def test_multiplication():\n+    assert 2 * 2 == 5\n",
+      "expected_lane": "needs_review",
+      "lane_rationale": "STEP 4. A wrong assertion in test code.",
+      "expected_memory": {
+        "verdict": "should_match",
+        "against_rows": [
+          1,
+          3
+        ],
+        "confidence": "guess",
+        "why": "Structurally identical to rows 1 and 3 - a pytest assertion failure on arithmetic - but a different file, a different operator and different numbers. This is the case memory.py's own comment flags as untested: the true pairs so far are the SAME fixture twice, so 0.994 is the floor for identical, not for merely similar. GUESS: 0.88-0.95, and this is the one I would least like to bet on."
+      },
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null
+    },
+    {
+      "id": "mid-05",
+      "group": "middle-zone",
+      "description": "pip fails on the same command as rows 9-12, but from a network timeout rather than a bad version. Opposite cause, opposite lane.",
+      "log_excerpt": "### job: test\n--- log lines 134-149 of 156 ---\n  LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib\n##[endgroup]\nWARNING: Retrying (Retry(total=4, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError: Failed to establish a new connection: [Errno -3] Temporary failure in name resolution': /simple/pytest/\nWARNING: Retrying (Retry(total=3, connect=None, read=None, redirect=None, status=None)) after connection broken by 'NewConnectionError: Failed to establish a new connection: [Errno -3] Temporary failure in name resolution': /simple/pytest/\nERROR: Could not install packages due to an OSError: Failed to establish a new connection to pypi.org\n##[error]Process completed with exit code 2.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/9702d54a-ff30-4ab3-8b2b-e9003840fd8e' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ -14,3 +14,3 @@ jobs:\n       - name: Install deps\n-        run: pip install pytest\n+        run: pip install --no-cache-dir pytest\n",
+      "expected_lane": "safe_auto_fix",
+      "lane_rationale": "STEP 3. DNS resolution failure reaching pypi.org. Re-running unchanged is likely to pass, and the diff (adding --no-cache-dir) cannot cause a name-resolution failure.",
+      "expected_memory": {
+        "verdict": "should_not_match",
+        "against_rows": [
+          9,
+          10,
+          11,
+          12
+        ],
+        "confidence": "guess",
+        "why": "THE DANGEROUS ONE. Same job, same step, same pip command, and a lot of shared vocabulary - ERROR, pip, pytest, Could not install. But the cause is the opposite kind of thing and so is the correct lane: this is amber, those rows are teal. A hint from row 10 would push the model towards 'a version that does not exist', which is not what happened. GUESS: 0.80-0.92, and if it lands above 0.90 the threshold is admitting a match that a human would not want."
+      },
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null
+    },
+    {
+      "id": "mid-06",
+      "group": "middle-zone",
+      "description": "Node cannot find a module. Same words as the Python ModuleNotFoundError rows, completely different ecosystem and fix.",
+      "log_excerpt": "### job: test\n--- log lines 44-58 of 70 ---\nRun node dist/server.js\nnode:internal/modules/cjs/loader:1215\n  throw err;\n  ^\n\nError: Cannot find module 'express'\nRequire stack:\n- /home/runner/work/widget/widget/dist/server.js\n    at Module._resolveFilename (node:internal/modules/cjs/loader:1212:15)\n    at Module._load (node:internal/modules/cjs/loader:1043:27)\n  code: 'MODULE_NOT_FOUND'\n##[error]Process completed with exit code 1.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/9702d54a-ff30-4ab3-8b2b-e9003840fd8e' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/package.json b/package.json\n--- a/package.json\n+++ b/package.json\n@@ -6,5 +6,4 @@\n   \"dependencies\": {\n-    \"express\": \"^4.19.2\"\n   }\n",
+      "expected_lane": "informational",
+      "lane_rationale": "STEP 2. The one file to edit is package.json - the dependency was removed from it. Dependency machinery, not program behaviour.",
+      "expected_memory": {
+        "verdict": "should_not_match",
+        "against_rows": [
+          4,
+          6,
+          7,
+          8
+        ],
+        "confidence": "guess",
+        "why": "'Cannot find module' versus 'No module named' is nearly the same English sentence, which is exactly the kind of surface similarity an embedding can be fooled by. But the fix is different (npm install versus create a Python package) and the lane is different. GUESS: 0.70-0.88, so probably rejected - but if it lands above 0.90 that is a false match worth knowing about."
+      },
+      "ambiguous": false,
+      "source_row": null,
+      "recorded_lane": null
+    },
+    {
+      "id": "live-01",
+      "group": "live-crosscheck",
+      "description": "Verbatim replay of live row 7: module 'app' missing during collection; diff added an unrelated test",
+      "source_row": 7,
+      "recorded_lane": "needs_review",
+      "log_excerpt": "### job: test\n--- log lines 169-184 of 191 ---\nE   ModuleNotFoundError: No module named 'app'\n=========================== short test summary info ============================\nERROR tests/test_config.py\n!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!\n=============================== 1 error in 0.14s ===============================\n##[error]Process completed with exit code 2.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/23a29951-9788-4c04-898b-e233a282813b' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/tests/test_greeting.py b/tests/test_greeting.py\n--- a/tests/test_greeting.py\n+++ b/tests/test_greeting.py\n@@ reconstructed from diff_summary: +6 -0 @@\n",
+      "expected_lane": "needs_review",
+      "lane_rationale": "Expected lane here IS the recorded lane, deliberately. This group asks whether the eval path reproduces the live path, not whether the live path was right.",
+      "ambiguous": false,
+      "expected_memory": null
+    },
+    {
+      "id": "live-02",
+      "group": "live-crosscheck",
+      "description": "Verbatim replay of live row 9: ci.yml pins pytest==999.999.999",
+      "source_row": 9,
+      "recorded_lane": "informational",
+      "log_excerpt": "### job: test\n--- log lines 134-149 of 156 ---\n  LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib\n##[endgroup]\nERROR: Ignored the following yanked versions: 8.1.0\nERROR: Could not find a version that satisfies the requirement pytest==999.999.999 (from versions: 2.0.0, 2.0.1, 2.0.2, 2.0.3, 2.1.0, 2.1.1, 2.1.2, 2.1.3, 2.2.0, 2.2.1, 2.2.2, 2.2.3, 2.2.4, 2.3.0, 2.3.1, 2.3.2, 2.3.3, 2.3.4, 2.3.5, 2.4.0, 2.4.1, 2.4.2, 2.5.0, 2.5.1, 2.5.2, 2.6.0, 2.6.1, 2.6.2, 2.6.3, 2.6.4, 2.7.0, 2.7.1, 2.7.2, 2.7.3, 2.8.0, 2.8.1, 2.8.2, 2.8.3, 2.8.4, 2.8.5, 2.8.6, 2.8.7, 2.9.0, 2.9.1, 2.9.2, 3.0.0, 3.0.1, 3.0.2, 3.0.3, 3.0.4, 3.0.5, 3.0.6, 3.0.7, 3.1.0, 3.1.1, 3.1.2, 3.1.3, 3.2.0, 3.2.1, 3.2.2, 3.2.3, 3.2.4, 3.2.5, 3.3.0, 3.3.1, 3.3.2, 3.4.0, 3.4.1, 3.4.2, 3.5.0, 3.5.1, 3.6.0, 3.6.1, 3.6.2, 3.6.3, 3.6.4, 3.7.0, 3.7.1, 3.7.2, 3.7.3, 3.7.4, 3.8.0, 3.8.1, 3.8.2, 3.9.1, 3.9.2, 3.9.3, 3.10.0, 3.10.1, 4.0.0, 4.0.1, 4.0.2, 4.1.0, 4.1.1, 4.2.0, 4.2.1, 4.3.0, 4.3.1, 4.4.0, 4.4.1, 4.4.2, 4.5.0, 4.6.0, 4.6.1, 4.6.2, 4.6.3, 4.6.4, 4.6.5, 4.6.6, 4.6.7, 4.6.8, 4.6.9, 4.6.10, 4.6.11, 5.0.0, 5.0.1, 5.1.0, 5.1.1, 5.1.2, 5.1.3, 5.2.0, 5.2.1, 5.2.2, 5.2.3, 5.2.4, 5.3.0, 5.3.1, 5.3.2, 5.3.3, 5.3.4, 5.3.5, 5.4.0, 5.4.1, 5.4.2, 5.4.3, 6.0.0rc1, 6.0.0, 6.0.1, 6.0.2, 6.1.0, 6.1.1, 6.1.2, 6.2.0, 6.2.1, 6.2.2, 6.2.3, 6.2.4, 6.2.5, 7.0.0rc1, 7.0.0, 7.0.1, 7.1.0, 7.1.1, 7.1.2, 7.1.3, 7.2.0, 7.2.1, 7.2.2, 7.3.0, 7.3.1, 7.3.2, 7.4.0, 7.4.1, 7.4.2, 7.4.3, 7.4.4, 8.0.0rc1, 8.0.0rc2, 8.0.0, 8.0.1, 8.0.2, 8.1.1, 8.1.2, 8.2.0, 8.2.1, 8.2.2, 8.3.0, 8.3.1, 8.3.2, 8.3.3, 8.3.4, 8.3.5, 8.4.0, 8.4.1, 8.4.2, 9.0.0, 9.0.1, 9.0.2, 9.0.3, 9.1.0, 9.1.1)\nERROR: No matching distribution found for pytest==999.999.999\n##[error]Process completed with exit code 1.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/0f0b6390-cb69-4cd3-a583-46e9afbe04d4' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ reconstructed from diff_summary: +2 -1 @@\n",
+      "expected_lane": "informational",
+      "lane_rationale": "Expected lane here IS the recorded lane, deliberately. This group asks whether the eval path reproduces the live path, not whether the live path was right.",
+      "ambiguous": false,
+      "expected_memory": null
+    },
+    {
+      "id": "live-03",
+      "group": "live-crosscheck",
+      "description": "Verbatim replay of live row 12: ci.yml pins pytest==998.998.997; this run also used memory",
+      "source_row": 12,
+      "recorded_lane": "informational",
+      "log_excerpt": "### job: test\n--- log lines 134-149 of 156 ---\n  LD_LIBRARY_PATH: /opt/hostedtoolcache/Python/3.11.16/x64/lib\n##[endgroup]\nERROR: Ignored the following yanked versions: 8.1.0\nERROR: Could not find a version that satisfies the requirement pytest==998.998.997 (from versions: 2.0.0, 2.0.1, 2.0.2, 2.0.3, 2.1.0, 2.1.1, 2.1.2, 2.1.3, 2.2.0, 2.2.1, 2.2.2, 2.2.3, 2.2.4, 2.3.0, 2.3.1, 2.3.2, 2.3.3, 2.3.4, 2.3.5, 2.4.0, 2.4.1, 2.4.2, 2.5.0, 2.5.1, 2.5.2, 2.6.0, 2.6.1, 2.6.2, 2.6.3, 2.6.4, 2.7.0, 2.7.1, 2.7.2, 2.7.3, 2.8.0, 2.8.1, 2.8.2, 2.8.3, 2.8.4, 2.8.5, 2.8.6, 2.8.7, 2.9.0, 2.9.1, 2.9.2, 3.0.0, 3.0.1, 3.0.2, 3.0.3, 3.0.4, 3.0.5, 3.0.6, 3.0.7, 3.1.0, 3.1.1, 3.1.2, 3.1.3, 3.2.0, 3.2.1, 3.2.2, 3.2.3, 3.2.4, 3.2.5, 3.3.0, 3.3.1, 3.3.2, 3.4.0, 3.4.1, 3.4.2, 3.5.0, 3.5.1, 3.6.0, 3.6.1, 3.6.2, 3.6.3, 3.6.4, 3.7.0, 3.7.1, 3.7.2, 3.7.3, 3.7.4, 3.8.0, 3.8.1, 3.8.2, 3.9.1, 3.9.2, 3.9.3, 3.10.0, 3.10.1, 4.0.0, 4.0.1, 4.0.2, 4.1.0, 4.1.1, 4.2.0, 4.2.1, 4.3.0, 4.3.1, 4.4.0, 4.4.1, 4.4.2, 4.5.0, 4.6.0, 4.6.1, 4.6.2, 4.6.3, 4.6.4, 4.6.5, 4.6.6, 4.6.7, 4.6.8, 4.6.9, 4.6.10, 4.6.11, 5.0.0, 5.0.1, 5.1.0, 5.1.1, 5.1.2, 5.1.3, 5.2.0, 5.2.1, 5.2.2, 5.2.3, 5.2.4, 5.3.0, 5.3.1, 5.3.2, 5.3.3, 5.3.4, 5.3.5, 5.4.0, 5.4.1, 5.4.2, 5.4.3, 6.0.0rc1, 6.0.0, 6.0.1, 6.0.2, 6.1.0, 6.1.1, 6.1.2, 6.2.0, 6.2.1, 6.2.2, 6.2.3, 6.2.4, 6.2.5, 7.0.0rc1, 7.0.0, 7.0.1, 7.1.0, 7.1.1, 7.1.2, 7.1.3, 7.2.0, 7.2.1, 7.2.2, 7.3.0, 7.3.1, 7.3.2, 7.4.0, 7.4.1, 7.4.2, 7.4.3, 7.4.4, 8.0.0rc1, 8.0.0rc2, 8.0.0, 8.0.1, 8.0.2, 8.1.1, 8.1.2, 8.2.0, 8.2.1, 8.2.2, 8.3.0, 8.3.1, 8.3.2, 8.3.3, 8.3.4, 8.3.5, 8.4.0, 8.4.1, 8.4.2, 9.0.0, 9.0.1, 9.0.2, 9.0.3, 9.1.0, 9.1.1)\nERROR: No matching distribution found for pytest==998.998.997\n##[error]Process completed with exit code 1.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/8a4f3346-1978-4e34-8eec-7ad14ae063b5' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ reconstructed from diff_summary: +1 -1 @@\n",
+      "expected_lane": "informational",
+      "lane_rationale": "Expected lane here IS the recorded lane, deliberately. This group asks whether the eval path reproduces the live path, not whether the live path was right.",
+      "ambiguous": false,
+      "expected_memory": null
+    },
+    {
+      "id": "live-04",
+      "group": "live-crosscheck",
+      "description": "Verbatim replay of live row 13: apt-get cannot locate libgdal-does-not-exist",
+      "source_row": 13,
+      "recorded_lane": "informational",
+      "log_excerpt": "### job: test\n--- log lines 132-147 of 154 ---\n##[endgroup]\nReading package lists...\nBuilding dependency tree...\nReading state information...\nE: Unable to locate package libgdal-does-not-exist\n##[error]Process completed with exit code 100.\nNode 20 is being deprecated. This workflow is running with Node 24 by default. If you need to temporarily use Node 20, you can set the ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION=true environment variable. For more information see: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/\nPost job cleanup.\n[command]/usr/bin/git version\ngit version 2.55.0\nTemporarily overriding HOME='/home/runner/work/_temp/bad0faf4-4855-469c-80db-d0cd5ae280ca' before making global git config changes\nAdding repository directory to the temporary git global config as a safe directory\n[command]/usr/bin/git config --global --add safe.directory /home/runner/work/buildDocterRepo1/buildDocterRepo1\n[command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n[command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n[command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader",
+      "diff": "diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml\n--- a/.github/workflows/ci.yml\n+++ b/.github/workflows/ci.yml\n@@ reconstructed from diff_summary: +2 -6 @@\n",
+      "expected_lane": "informational",
+      "lane_rationale": "Expected lane here IS the recorded lane, deliberately. This group asks whether the eval path reproduces the live path, not whether the live path was right.",
+      "ambiguous": false,
+      "expected_memory": null
+    }
+  ]
+}
