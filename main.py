@@ -30,6 +30,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 # Reads .env into the environment. This has to run BEFORE db is imported:
@@ -38,6 +39,7 @@ from fastapi.responses import JSONResponse
 # are less fussy - db is not.)
 load_dotenv()
 
+import dashboard  # noqa: E402
 import db  # noqa: E402
 import diagnose  # noqa: E402
 import embeddings  # noqa: E402
@@ -74,7 +76,41 @@ async def lifespan(_app: FastAPI):
     yield
 
 
-app = FastAPI(title="BuildDoctor", version="0.6.0", lifespan=lifespan)
+app = FastAPI(title="BuildDoctor", version="0.7.0", lifespan=lifespan)
+
+# The dashboard's read-only routes, all under /api. A router rather than a
+# second FastAPI app: same process, same connection pool, same lifespan -
+# see the module docstring in dashboard.py for why this is not its own
+# service.
+app.include_router(dashboard.router)
+
+# The dashboard is served by Vite on port 5173 while the API is on 8000.
+# Different port means different ORIGIN, and a browser refuses to hand a
+# page the response to a cross-origin request unless the server says it is
+# allowed. Without this the network tab shows a 200 and the page still
+# shows an error, which is a confusing five minutes the first time.
+#
+# Dev only, and narrow on purpose. Named origins rather than "*", methods
+# limited to the two the dashboard uses. This does not weaken /webhook:
+# that is verified by HMAC signature, and CORS is a rule browsers apply to
+# scripts, not a lock on the endpoint - curl and GitHub never consult it.
+DEV_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        origin.strip()
+        for origin in os.environ.get(
+            "DASHBOARD_ORIGINS", ",".join(DEV_ORIGINS)
+        ).split(",")
+        if origin.strip()
+    ],
+    allow_methods=["GET", "OPTIONS"],
+    allow_headers=["*"],
+)
 
 PROJECT_DIR = Path(__file__).parent
 LOGS_DIR = PROJECT_DIR / "logs"

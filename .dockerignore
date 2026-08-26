@@ -18,3 +18,9 @@ diagnoses.jsonl
 .git/
 .gitignore
 README.md
+
+# The dashboard has its own image (frontend/Dockerfile) and its own build
+# context. Without this line the app image would swallow the frontend's
+# node_modules - tens of megabytes of Windows-built JavaScript that the
+# Python container has no use for.
+frontend/

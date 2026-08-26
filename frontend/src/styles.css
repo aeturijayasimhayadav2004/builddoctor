@@ -1,0 +1,532 @@
+/* BuildDoctor dashboard.
+ *
+ * The three lane colours are the same names the project has used since
+ * Phase 4 - teal, amber, coral - so the page, the README and the code all
+ * describe the same thing. A fourth grey exists for rows that predate
+ * lanes entirely.
+ */
+
+:root {
+  --bg: #0d1117;
+  --panel: #151b23;
+  --panel-2: #1c232d;
+  --line: #263141;
+  --text: #e6edf3;
+  --muted: #8b98a9;
+
+  --teal: #2dd4bf;
+  --amber: #f5b544;
+  --coral: #fb7185;
+  --grey: #7d8b9e;
+
+  --radius: 10px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.55 ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+code,
+pre {
+  font-family: ui-monospace, "Cascadia Code", "Consolas", monospace;
+}
+
+.page {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 32px 24px 80px;
+}
+
+/* --- masthead ---------------------------------------------------------- */
+
+.masthead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 28px;
+}
+
+.masthead h1 {
+  margin: 0;
+  font-size: 30px;
+  letter-spacing: -0.02em;
+}
+
+.tagline {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 9px 18px;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+button:hover:not(:disabled) {
+  border-color: var(--teal);
+}
+
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* --- stat cards -------------------------------------------------------- */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+  margin-bottom: 34px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+
+.card-wide {
+  grid-column: span 2;
+  min-width: 280px;
+}
+
+.card h2 {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.figure {
+  margin: 0;
+  font-size: 34px;
+  font-weight: 650;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+
+.figure .unit {
+  font-size: 17px;
+  font-weight: 500;
+  color: var(--muted);
+  margin-left: 2px;
+}
+
+.note {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* --- lane bar ---------------------------------------------------------- */
+
+.lane-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--panel-2);
+  margin-bottom: 12px;
+}
+
+.lane-slice {
+  height: 100%;
+}
+
+.lane-informational { background: var(--teal); }
+.lane-safe_auto_fix { background: var(--amber); }
+.lane-needs_review  { background: var(--coral); }
+.lane-none          { background: var(--grey); }
+
+.lane-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.lane-legend li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.lane-legend strong {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex: none;
+}
+
+/* --- badges and chips -------------------------------------------------- */
+
+.badge {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+
+.badge-informational {
+  color: var(--teal);
+  background: rgba(45, 212, 191, 0.12);
+  border-color: rgba(45, 212, 191, 0.32);
+}
+
+.badge-safe_auto_fix {
+  color: var(--amber);
+  background: rgba(245, 181, 68, 0.12);
+  border-color: rgba(245, 181, 68, 0.32);
+}
+
+.badge-needs_review {
+  color: var(--coral);
+  background: rgba(251, 113, 133, 0.12);
+  border-color: rgba(251, 113, 133, 0.32);
+}
+
+.badge-none {
+  color: var(--grey);
+  background: rgba(125, 139, 158, 0.12);
+  border-color: rgba(125, 139, 158, 0.3);
+}
+
+.chip {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.chip-memory {
+  color: #c4b5fd;
+  background: rgba(167, 139, 250, 0.14);
+  border: 1px solid rgba(167, 139, 250, 0.32);
+}
+
+.chip-quiet {
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
+/* --- table ------------------------------------------------------------- */
+
+.section-title {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0 0 10px;
+}
+
+.section-title .muted {
+  font-weight: 400;
+  font-size: 13px;
+  margin-left: 8px;
+}
+
+/* The scroll container. Eight columns of non-wrapping text have a floor
+ * below which they cannot fit, and on a narrow window something has to
+ * give. Scrolling THIS box keeps the damage local: the cards, the heading
+ * and the page itself stay where they are, and only the table moves. The
+ * alternative - letting the page scroll sideways - drags the entire layout
+ * off screen and is the single most obvious way for a dashboard to look
+ * broken. */
+.rows-scroll {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow-x: auto;
+}
+
+.rows {
+  width: 100%;
+  /* Below this the columns stop being readable, so the wrapper scrolls
+   * instead of the text being crushed. */
+  min-width: 820px;
+  border-collapse: collapse;
+}
+
+.rows thead th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 11px 12px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.row-group + .row-group .summary-row td {
+  border-top: 1px solid var(--line);
+}
+
+.summary-row {
+  cursor: pointer;
+}
+
+.summary-row:hover td {
+  background: var(--panel-2);
+}
+
+.summary-row:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: -2px;
+}
+
+.row-group.open .summary-row td {
+  background: var(--panel-2);
+}
+
+.summary-row td {
+  padding: 11px 12px;
+  vertical-align: middle;
+}
+
+.col-toggle {
+  width: 28px;
+  padding-right: 0 !important;
+}
+
+.col-id {
+  width: 44px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.col-repo {
+  white-space: nowrap;
+}
+
+.col-summary {
+  /* The widest column, and the one that must not push the others off the
+     page. One line, cut with an ellipsis; the whole text is one click
+     away in the detail panel. */
+  max-width: 460px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.col-when {
+  white-space: nowrap;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.chevron {
+  display: inline-block;
+  color: var(--muted);
+  transition: transform 0.15s;
+}
+
+.chevron.down {
+  transform: rotate(90deg);
+  color: var(--teal);
+}
+
+a {
+  color: var(--teal);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* --- detail panel ------------------------------------------------------ */
+
+.detail-row td {
+  padding: 0;
+  background: #10161e;
+  border-top: 1px solid var(--line);
+  /* max-width: 0 looks wrong and is load-bearing.
+   *
+   * A table sizes its columns from the INTRINSIC width of their content,
+   * and the log excerpt below is a <pre> holding lines thousands of pixels
+   * long. Without this the cell grows to fit all of it, the table follows,
+   * and the whole page scrolls sideways - `overflow-x: auto` on the <pre>
+   * never fires, because the box is never smaller than what is inside it.
+   *
+   * Clamping the cell's max-width takes it out of that calculation. The
+   * table is already width:100%, so the cell still fills the row; it just
+   * no longer votes on how wide the table should be. Everything inside can
+   * then be told to scroll on its own. */
+  max-width: 0;
+}
+
+.detail {
+  padding: 18px 20px 22px 50px;
+  display: grid;
+  gap: 16px;
+}
+
+/* The other half of the same problem. A grid item defaults to
+ * min-width: auto, which means "never shrink below your content" - so the
+ * panels would push straight back out again even with the cell clamped.
+ * min-width: 0 lets them be as narrow as the column they are in. */
+.detail > * {
+  min-width: 0;
+}
+
+.facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 12px 20px;
+  margin: 0;
+}
+
+.facts > div {
+  min-width: 0;
+}
+
+.facts dt {
+  font-size: 11px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.facts dd {
+  margin: 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+
+.panel h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.panel-memory {
+  border-color: rgba(167, 139, 250, 0.34);
+  background: rgba(167, 139, 250, 0.06);
+}
+
+.panel-memory h3 {
+  color: #c4b5fd;
+}
+
+.panel p {
+  margin: 0;
+}
+
+.panel p + p {
+  margin-top: 8px;
+}
+
+.prose {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.log {
+  margin: 0;
+  padding: 12px;
+  background: #0b0f15;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: #cbd5e1;
+  /* Logs contain long lines. Scroll the block, never the page. */
+  overflow-x: auto;
+  max-height: 340px;
+  overflow-y: auto;
+  white-space: pre;
+}
+
+/* --- states ------------------------------------------------------------ */
+
+.alert {
+  background: rgba(251, 113, 133, 0.09);
+  border: 1px solid rgba(251, 113, 133, 0.34);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 24px;
+}
+
+.alert p {
+  margin: 6px 0 0;
+}
+
+.alert code {
+  background: rgba(255, 255, 255, 0.06);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.empty {
+  color: var(--muted);
+  padding: 28px 0;
+}
+
+.foot {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 12px;
+}
+
+/* Give the summary column back its space in steps, so a laptop-sized window
+ * still fits the whole table without scrolling anything. The wrapper's
+ * scrollbar is the safety net below that, not the first resort. */
+@media (max-width: 1200px) {
+  .col-summary {
+    max-width: 260px;
+  }
+}
+
+@media (max-width: 900px) {
+  .card-wide {
+    grid-column: span 1;
+  }
+  .col-summary {
+    max-width: 200px;
+  }
+}

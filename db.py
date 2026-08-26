@@ -31,7 +31,13 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    defer,
+    mapped_column,
+    sessionmaker,
+)
 
 # Dimensions of the vector all-MiniLM-L6-v2 produces. Declared here because
 # it is a property of the COLUMN - Postgres needs a fixed width - and
@@ -335,3 +341,152 @@ def recent(limit: int = 20) -> list[Diagnosis]:
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# Read-only queries for the dashboard (Phase 7).
+#
+# In this file, not in dashboard.py, for the reason at the top of the
+# module: everything that touches SQL lives here. dashboard.py turns these
+# results into JSON and never sees a SELECT.
+#
+# Every function below only reads. Phase 7 adds no way to change anything
+# through the web layer, which is why none of them take a session or a
+# commit.
+# ---------------------------------------------------------------------------
+
+# The three lanes, in the order the dashboard shows them. Hard-coded rather
+# than discovered from the data, because a lane with zero rows still has to
+# appear. "No failure has ever been auto-fixed" is a real fact about this
+# project, and a GROUP BY would simply leave it out.
+LANE_ORDER = ("informational", "safe_auto_fix", "needs_review")
+
+# Three states, not two, and the difference matters.
+#
+# Rows 1-11 were written before Phase 6 existed, so `raw` has no
+# memory_match KEY AT ALL. Every row written since has the key, set to null
+# when nothing was close enough. Those are different facts - "memory was
+# never asked" versus "memory was asked and said no" - and collapsing them
+# would report a hit rate of 1-in-13 for a feature that has only ever run
+# twice.
+_MEMORY_ASKED = Diagnosis.raw.has_key("memory_match")
+
+# jsonb_typeof returns the string 'object' for a real match and 'null' for
+# a JSON null, which is how a hit is told apart from a miss. Comparing to
+# NULL with = would not work: in SQL, null = null is not true.
+_MEMORY_HIT = func.jsonb_typeof(Diagnosis.raw["memory_match"]) == "object"
+
+
+def _percent(part: int, whole: int) -> float:
+    """Share of the whole, rounded to one place. 0 when there is nothing."""
+    if not whole:
+        return 0.0
+    return round(100.0 * part / whole, 1)
+
+
+def dashboard_stats() -> dict:
+    """Counts for the stat cards. One row of aggregates, plus the lanes."""
+    with Session() as session:
+        # count(*) FILTER (WHERE ...) - one pass over the table producing
+        # every counter at once, instead of four separate queries that
+        # could each see a slightly different moment.
+        totals = session.execute(
+            select(
+                func.count().label("total"),
+                func.count().filter(_MEMORY_ASKED).label("memory_asked"),
+                func.count().filter(_MEMORY_HIT).label("memory_hits"),
+                func.count()
+                .filter(Diagnosis.embedding.isnot(None))
+                .label("searchable"),
+                func.count(func.distinct(Diagnosis.repo)).label("repos"),
+                func.max(Diagnosis.created_at).label("latest_at"),
+            )
+        ).one()
+
+        by_lane = dict(
+            session.execute(
+                select(Diagnosis.lane, func.count()).group_by(Diagnosis.lane)
+            ).all()
+        )
+
+    total = int(totals.total or 0)
+
+    # The known lanes first, in a fixed order, then whatever is left over.
+    lanes = [
+        {
+            "lane": name,
+            "count": int(by_lane.get(name, 0)),
+            "percent": _percent(int(by_lane.get(name, 0)), total),
+        }
+        for name in LANE_ORDER
+    ]
+
+    # Rows 1-4 predate Phase 4 and have lane = NULL. They are real
+    # diagnoses and they are counted, but they were never classified, so
+    # they get their own bucket rather than being quietly dropped or
+    # dumped into one of the three real lanes.
+    unclassified = int(by_lane.get(None, 0))
+    if unclassified:
+        lanes.append(
+            {
+                "lane": None,
+                "count": unclassified,
+                "percent": _percent(unclassified, total),
+            }
+        )
+
+    asked = int(totals.memory_asked or 0)
+    hits = int(totals.memory_hits or 0)
+
+    return {
+        "total": total,
+        "repos": int(totals.repos or 0),
+        "latest_at": totals.latest_at.isoformat() if totals.latest_at else None,
+        "lanes": lanes,
+        "memory": {
+            # Denominator, deliberately exposed. The rate alone would look
+            # like a claim about all thirteen rows; shipping `asked` next
+            # to it means the dashboard can say "1 of 2" and be honest.
+            "asked": asked,
+            "hits": hits,
+            "rate": _percent(hits, asked),
+            # How many rows memory can currently find, which is a different
+            # question from how often it found one.
+            "searchable": int(totals.searchable or 0),
+        },
+    }
+
+
+# A sane ceiling, not pagination. There are thirteen rows, so paging would
+# be machinery guarding against a problem that does not exist yet.
+#
+# LEFT HERE ON PURPOSE, AND IT WILL NEED REVISITING: once this table holds
+# a few thousand rows, this endpoint starts shipping every log excerpt in
+# the database on every page load. The fix at that point is a cursor on
+# created_at plus a truncated excerpt in the list view, with the full text
+# fetched only when a row is expanded.
+DASHBOARD_DEFAULT_LIMIT = 100
+DASHBOARD_MAX_LIMIT = 500
+
+
+def list_diagnoses(limit: int = DASHBOARD_DEFAULT_LIMIT) -> list[tuple[Diagnosis, bool]]:
+    """Newest diagnoses first, each paired with "does it have an embedding".
+
+    created_at DESC, then id DESC: two diagnoses of the same run can land
+    in the same second, and without the tiebreak their order on screen
+    would be whatever Postgres felt like that day.
+
+    The embedding column is DEFERRED - 384 floats per row that the browser
+    has no use for - and a plain boolean is selected alongside instead. The
+    boolean has to be selected explicitly, because asking a deferred
+    attribute for its value would fetch the whole vector back, once per
+    row, which is the thing being avoided.
+    """
+    with Session() as session:
+        stmt = (
+            select(Diagnosis, Diagnosis.embedding.isnot(None).label("embedded"))
+            .options(defer(Diagnosis.embedding))
+            .order_by(Diagnosis.created_at.desc(), Diagnosis.id.desc())
+            .limit(limit)
+        )
+        return [(row, bool(embedded)) for row, embedded in session.execute(stmt)]

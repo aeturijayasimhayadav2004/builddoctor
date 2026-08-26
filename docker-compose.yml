@@ -120,5 +120,67 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  frontend:
+    # ==================================================================
+    # DEVELOPMENT ONLY. This runs the Vite DEV SERVER.
+    #
+    # A dev server compiles each file on demand and pushes changes into
+    # the open browser tab. That is what makes editing a component feel
+    # instant, and it is also why it must not be what ships: it holds the
+    # whole toolchain in memory, serves hundreds of small unoptimised
+    # modules, and reports errors in a way meant for the person writing
+    # the code rather than the person using it.
+    #
+    # PHASE 9 (deploy) WILL HAVE TO CHANGE THIS. The production shape is
+    # a two-stage build: stage one runs `npm run build`, which typechecks
+    # and bundles the whole app into a handful of hashed files in dist/;
+    # stage two copies only dist/ into a tiny static web server (nginx or
+    # Caddy) and throws node away entirely. The resulting image has no
+    # npm, no source, and no dev server in it. Two things also change at
+    # that point: VITE_API_BASE stops being a localhost url and becomes
+    # wherever the API is really deployed, and it gets baked in at BUILD
+    # time rather than read at start-up - the same build-time-versus-
+    # runtime tradeoff the embedding weights posed in Phase 6.
+    # ==================================================================
+    build:
+      # Its own context, so the Node image never sees the Python project
+      # and the Python image never sees node_modules.
+      context: ./frontend
+    environment:
+      # Where the API is, AS THE BROWSER SEES IT.
+      #
+      # This is the one line people get wrong here. Everywhere else in
+      # this file a service talks to another service by its compose name -
+      # the app reaches the database at "postgres" and the MCP server at
+      # "mcp". This is the exception, and not because of a different
+      # rule but because of a different AUDIENCE: this value is baked
+      # into JavaScript that runs in a browser ON THE HOST. The browser
+      # is not on the compose network and has never heard of a service
+      # called "app". It needs a url the host can open.
+      #
+      # http://app:8000 would fail with a DNS error in the browser
+      # console while the network looked perfectly healthy from inside
+      # every container.
+      VITE_API_BASE: http://localhost:8000
+    ports:
+      - "5173:5173"
+    volumes:
+      # Bind mount, which is the entire point of a dev server: files
+      # edited on the host appear in the container immediately and Vite
+      # pushes them into the browser.
+      - ./frontend:/app
+      # An anonymous volume masking node_modules. Without this line the
+      # bind mount above would hide the container's node_modules behind
+      # the host's Windows-built one, and node would try to load Linux
+      # modules from Windows binaries.
+      - /app/node_modules
+    depends_on:
+      # Start order only. The page loads fine before the API answers - it
+      # shows its own error and a Refresh button - so there is nothing
+      # here worth blocking a start-up on.
+      - app
+    restart: unless-stopped
+
+
 volumes:
   pgdata:

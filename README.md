@@ -2,13 +2,14 @@
 
 An agent that watches a GitHub repo and reacts when a CI build fails.
 
-**Current stage: Phase 6.** When a workflow run fails, BuildDoctor fetches the
+**Current stage: Phase 7.** When a workflow run fails, BuildDoctor fetches the
 logs and the triggering diff, **checks whether anything like this has failed
 before**, asks a model what went wrong *and which of three lanes the failure
 belongs in*, then acts on that decision - comment, re-run, or flag for a
 human - and stores the whole thing in Postgres. Those actions are carried out
-by a separate **MCP server**, which the app calls as a client. Three
-containers run together under `docker compose`.
+by a separate **MCP server**, which the app calls as a client. Everything it
+has ever concluded is visible on a **React dashboard**. Four containers run
+together under `docker compose`.
 
 ## What it does now
 
@@ -25,6 +26,8 @@ containers run together under `docker compose`.
    - runs the action for that lane by calling the MCP server (see below)
    - writes a row to the `diagnoses` table in Postgres, including the lane
      **and an embedding of the log, so this failure is findable next time**
+4. Every row it has ever written is listed on the **dashboard** at
+   <http://localhost:5173>, with no build needed to see it.
 
 ## The three lanes
 
@@ -96,12 +99,14 @@ get wrong.
 | `log_excerpt.py` | Cuts a raw CI log down to the lines around the error |
 | `diagnose.py` | Asks the LLM for a diagnosis **and** a lane, as structured JSON |
 | `db.py` | The `diagnoses` table, and every line of SQL in the project |
+| `dashboard.py` | The dashboard's read-only `/api` routes. No writes anywhere in it |
 | `embeddings.py` | Turns a log excerpt into 384 numbers, using a local model |
 | `memory.py` | "Has this failed before?" - the similarity lookup and its threshold |
 | `migrate_jsonl.py` | One-time backfill of the old `diagnoses.jsonl` history |
 | `backfill_embeddings.py` | One-time backfill of embeddings for rows written before Phase 6 |
 | `Dockerfile` | One image, used by both the app and the MCP server |
-| `docker-compose.yml` | Runs app + mcp + postgres together |
+| `docker-compose.yml` | Runs app + mcp + postgres + frontend together |
+| `frontend/` | The React + TypeScript dashboard (Vite). See below |
 
 ## Memory: has this failed before?
 
@@ -166,6 +171,30 @@ A run also cannot match **itself**: the lookup excludes the current `run_id`.
 Redelivering a webhook re-processes the same run, and without that exclusion
 the new diagnosis would match the row the previous delivery just wrote, at
 ~1.00, and learn only that it equals itself.
+
+### Known limitation: the untested middle
+
+Carried forward from Phase 6 deliberately, and **not** fixed in Phase 7.
+
+Every similarity ever measured on real data has landed in one of two clumps:
+about 1.00 when the same fixture failed twice, and 0.83 or below when two
+failures were genuinely unrelated. Nothing has ever scored **between 0.83 and
+0.99**.
+
+That means the threshold has been proven at its edges and never in its middle.
+If a future failure is *genuinely similar but not identical* and scores, say,
+0.87, it will be silently rejected. That is the intended behaviour - the whole
+argument above is that silence beats a weak hint - but it is a choice made
+without evidence, because no such case has occurred yet.
+
+**This is a Phase 8 question.** Measuring it properly needs a labelled set of
+"similar but not identical" failures and a run of the threshold against them,
+which is an eval suite, not a tweak. Changing the number now, on no data,
+would only move the untested gap somewhere else.
+
+The dashboard makes the raw material visible: every row's similarity is shown
+when memory matched, so the numbers accumulate in plain sight rather than only
+in the logs.
 
 ### How the hint reaches the model
 
@@ -250,6 +279,146 @@ second run finds nothing. It reads `id` and `log_excerpt` and writes
 `posted_url` is NULL because of the Phase 5 structured-output bug - backfills
 exactly like every other row. That NULL is a record of a bug in a different
 column and has nothing to do with what the log said.
+
+## The dashboard
+
+A web page listing every diagnosis BuildDoctor has ever made, so the project
+can be shown to someone without waiting for a build to break on cue.
+
+```powershell
+docker compose up --build
+```
+
+Then open **<http://localhost:5173>**. The API it reads is on port 8000; both
+have to be up.
+
+| Piece | Where | Role |
+| ----- | ----- | ---- |
+| `dashboard.py` | in the app | two read-only routes under `/api` |
+| `frontend/` | its own container | React + TypeScript, served by Vite |
+
+### Why the routes live in the existing app
+
+The obvious-looking move is a small backend of its own. It would need a second
+image, a second connection pool to the same database, a second entry in
+compose, and a second thing that can be down - and in exchange it could do
+nothing the app cannot already do. `db.py` already owns the pool and already
+knows the schema.
+
+That is Phase 5's rule applied one layer up. Phase 5 exposed four MCP tools and
+stopped, because a capability only earns a new surface when something actually
+needs it to be separate. Reading rows the app already owns does not qualify.
+
+Everything in `dashboard.py` reads. There is no route there that writes,
+deletes, re-runs or posts, which is what makes it safe to leave open to a
+browser with nothing in front of it.
+
+### The two routes
+
+| Route | Returns |
+| ----- | ------- |
+| `GET /api/stats` | totals, the lane breakdown as percentages, and the memory hit rate |
+| `GET /api/diagnoses?limit=100` | every diagnosis, newest first, flattened for the UI |
+
+`limit` is a **ceiling, not pagination**. There are thirteen rows; paging would
+be machinery guarding a problem that does not exist. It is written down in
+`db.py` rather than left to be rediscovered: once this table holds a few
+thousand rows, the endpoint starts shipping every log excerpt in the database
+on every page load, and the fix at that point is a cursor on `created_at` plus
+a truncated excerpt in the list view, with the full text fetched only when a
+row is expanded.
+
+Half the fields the page shows are not columns - `posted_url`, `run_url`,
+`workflow` and `memory_match` all live inside the `raw` JSONB blob.
+`dashboard.py` flattens them, so the frontend never has to know which fields
+were promoted to real columns and which were not, and promoting one later
+changes nothing on the other side of the wire.
+
+### What each stat means
+
+| Card | Meaning |
+| ---- | ------- |
+| **Diagnoses** | Every row ever written, across every watched repository |
+| **By lane** | Share of diagnoses per lane. **Includes a grey `unclassified` slice** for rows 1-4, which were diagnosed before Phase 4 invented lanes |
+| **Memory hits** | Of the failures where memory actually ran, how many found a past match above 0.90 |
+| **Searchable** | Rows that have an embedding, so a future failure can find them |
+
+**Memory hits deserves its footnote.** The denominator is *not* the total
+number of diagnoses. Eleven of the thirteen rows were written before Phase 6
+existed and were never asked, so counting them as misses would report a hit
+rate of 1-in-13 for a feature that has only ever run twice. The card shows
+"1 of 2" underneath the percentage for exactly that reason - the denominator is
+the honest part of the number.
+
+The distinction is carried through to the table too. The memory column has
+**three** states, not two:
+
+| Shown | Means |
+| ----- | ----- |
+| `#10 · 100.0%` | memory matched that row, at that similarity, and the model was given it as a hint |
+| `no match` | memory ran and deliberately returned nothing - the threshold working, not a failure |
+| `—` | memory did not exist when this row was written |
+
+### Nulls
+
+Several rows have one, for unrelated reasons, and every one of them shows a
+dash rather than the word `undefined`:
+
+- **row 10** has no `posted_url` - a Phase 5 bug lost it
+- **every amber run** has no `posted_url` either, because that lane re-runs a
+  job and posts no comment at all
+- **rows 1-4** have no `lane`, because they predate Phase 4
+
+The TypeScript types in `frontend/src/api.ts` declare each of these as
+`| null`, so the compiler refuses to build code that reads through one without
+checking. That is most of the argument for TypeScript on a page this small:
+the response shape is exactly the kind of thing that is easy to get subtly
+wrong, and this project has already proved that once - row 10's missing url is
+a Phase 5 untyped-dict bug that a type would have caught.
+
+### This is a DEV setup
+
+The `frontend` container runs the **Vite dev server**. It compiles each file on
+demand and pushes changes straight into the open browser tab, which is what
+makes editing a component feel instant. It is also why it must not ship: it
+holds the whole toolchain in memory, serves hundreds of small unoptimised
+modules, and reports errors in a way meant for the person writing the code.
+
+**Phase 9 (deploy) will have to change this**, and it is worth knowing what
+that involves now rather than being surprised by it:
+
+1. `npm run build` typechecks and bundles everything into a handful of hashed
+   files in `dist/` - currently about 200 kB of JavaScript, 64 kB gzipped.
+2. A two-stage Dockerfile: stage one runs that build, stage two copies **only**
+   `dist/` into a small static web server (nginx or Caddy) and discards node
+   entirely. The shipped image has no npm, no source and no dev server in it.
+3. `VITE_API_BASE` stops being a localhost url and becomes wherever the API
+   actually lives - and it gets fixed at **build** time rather than read at
+   start-up, which is the same build-time-versus-runtime tradeoff the embedding
+   weights posed in Phase 6.
+4. CORS narrows from the two localhost dev origins to the real one, or
+   disappears entirely if the static files end up served from the same origin
+   as the API.
+
+### `localhost:8000`, not `app:8000`
+
+Everywhere else in `docker-compose.yml`, one service reaches another by its
+compose service name - the app finds the database at `postgres` and the MCP
+server at `mcp`. The frontend is the exception:
+
+```yaml
+VITE_API_BASE: http://localhost:8000
+```
+
+Not because the rule is different, but because the **audience** is. That value
+is baked into JavaScript that runs in a browser **on the host**. The browser is
+not on the compose network and has never heard of a service called `app`, so it
+needs a url the host can open. `http://app:8000` fails with a DNS error in the
+browser console while every container looks perfectly healthy from the inside.
+
+It is the same lesson as `localhost` vs `postgres` further up this file, seen
+from the other end: there, `localhost` was wrong because the code ran inside a
+container; here, the service name is wrong because the code runs outside one.
 
 ## The MCP server
 
@@ -378,13 +547,14 @@ below.
 docker compose up --build
 ```
 
-That starts three containers:
+That starts four containers:
 
 | Service | Port | Role |
 | ------- | ---- | ---- |
 | `postgres` | 5433 (host) | stores diagnoses |
 | `mcp` | 8001 | the four GitHub actions, as MCP tools |
-| `app` | 8000 | webhook receiver, evidence gathering, the lane graph |
+| `app` | 8000 | webhook receiver, evidence gathering, the lane graph, the dashboard API |
+| `frontend` | 5173 | the dashboard itself, on the Vite **dev** server |
 
 Compose waits for Postgres's healthcheck before starting the app, and the app
 creates its table on startup. Confirm at <http://127.0.0.1:8000/health>.
@@ -502,6 +672,23 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 ```
 
 Requires Python 3.10 or newer. The Docker image uses 3.12.
+
+### The dashboard, outside Docker
+
+Same idea, one directory down. Node 20 or newer:
+
+```powershell
+cd frontend
+npm install          # first time only
+npm run dev
+```
+
+That serves <http://localhost:5173> and expects the API on
+<http://localhost:8000>, which is the default in `frontend/src/api.ts` - so
+whether the API is a container or a local `uvicorn` makes no difference to it.
+
+`npm run typecheck` checks the types without building anything, which is the
+fastest way to find out that a field was renamed on the Python side.
 
 ## Exposing it to GitHub
 

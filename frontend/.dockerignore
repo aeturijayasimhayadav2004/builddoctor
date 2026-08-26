@@ -1,0 +1,4 @@
+# Installed inside the image. The host copy is Windows-built and would be
+# the wrong platform's binaries.
+node_modules/
+dist/
