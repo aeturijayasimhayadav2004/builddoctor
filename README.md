@@ -2,9 +2,15 @@
 
 An agent that watches a GitHub repo and reacts when a CI build fails.
 
-**Current stage: Phase 9 - deployed.** The backend runs in production at
-**<https://builddoctor.onrender.com>**, against a Neon Postgres. See
-[Production](#production) for the topology and why it is shaped that way.
+**Current stage: Phase 10 - secrets rotated, production kept warm.** The
+backend runs in production at **<https://builddoctor.onrender.com>** and the
+dashboard at **<https://builddoctor-dashboard.onrender.com>**, against a Neon
+Postgres. See [Production](#production) for the topology and why it is shaped
+that way.
+
+> The dashboard has **no authentication** and `/api/diagnoses` returns every
+> row to anyone who asks. That is Phase 11's job. Until then, treat the
+> dashboard URL as readable by anyone who finds it.
 
 When a workflow run fails, BuildDoctor fetches the
 logs and the triggering diff, **checks whether anything like this has failed
@@ -813,6 +819,49 @@ Groq has a free tier, which is why the project points there.
 `docker-compose.yml` sets its own value, which wins. See the note on hosts
 below.
 
+### How a secret actually leaked here, and what rotation did about it
+
+Phase 10 rotated every credential this project uses. The interesting part is
+not the rotation, it is **where the exposure turned out to be**, because that
+determined whether rotating was sufficient at all.
+
+**The distinction that mattered.** A secret committed to git and later deleted
+is still in the object database forever - anyone who can clone the repository
+can recover it, and rotating closes future use without un-exposing the old
+value. A secret that leaked somewhere else can be fully retired by rotation.
+These need different responses, so the vector was established *before* anything
+was changed.
+
+Five surfaces were scanned by comparing raw bytes, reporting booleans only:
+
+| Surface | How | Result |
+| ------- | --- | ------ |
+| Git object database | all 99 blobs via `git cat-file --batch-all-objects`, which enumerates the object store itself and so includes **unreachable** objects that `git log` would never walk | clean |
+| Was `.env` ever committed | `git log --all --full-history` | never - only `.env.example`, which holds placeholders |
+| Working tree | every file except `.env` | clean |
+| The deployed dashboard bundle | fetched live and searched | clean |
+| Neon `diagnoses` | every text and JSONB column, all rows | clean |
+
+**Nothing was ever in git.** The leak was the local session transcript of the
+assistant that built this: a redaction step failed and printed live values into
+a plaintext log. So rotation *was* sufficient - no history rewrite, no
+force-push, no permanently burned credential.
+
+A useful property of that scan: `WEBHOOK_SECRET`, which had already been
+rotated, came back clean everywhere. A scan that finds nothing everywhere is
+indistinguishable from a scan that is silently broken - which is exactly the
+failure that caused the original leak. Having one known-clean and several
+known-dirty values in the same run is what made the result trustworthy.
+
+**The rule this leaves behind:** never print a value read from `.env` or the
+environment, not even to prove it is correct. Check it with a boolean, or
+compare a SHA-256 prefix - a hash is one-way, so it can be shown, logged and
+compared across runs without disclosing anything. Both original leaks were a
+filter that silently failed to filter, followed by printing its output.
+
+`XAI_API_KEY` was removed rather than rotated: it appeared in `.env` but is
+referenced nowhere in the codebase.
+
 ## Production
 
 Live at **<https://builddoctor.onrender.com>**.
@@ -821,7 +870,7 @@ Live at **<https://builddoctor.onrender.com>**.
 | ----- | ------------- | --- |
 | App + MCP server | One Render **web service**, Free instance, Oregon | see below |
 | Postgres + pgvector | **Neon**, `aws-us-west-2`, Postgres 18, pgvector 0.8.6 | Render's free database expires; Neon's does not |
-| Dashboard | not deployed yet | Phase 10 |
+| Dashboard | Render **static site**, Free | <https://builddoctor-dashboard.onrender.com> |
 
 ### Why Neon rather than Render Postgres
 
@@ -912,16 +961,58 @@ misconfigured guard fails open; a missing route cannot be misconfigured. So
 and widening it to include the public hostname would expose four
 GitHub-writing tools to the internet with no authentication in front of them.
 
-### Free-tier behaviour worth knowing
+### Sleeping loses webhooks outright, and keeping warm is the fix
 
-Render spins a free web service down after **15 minutes** without traffic, and
-this one cold-starts slowly because it loads the embedding model before uvicorn
-serves anything - deliberately, so that a webhook never waits for it. GitHub's
-webhook timeout is 10 seconds, so the first failed build after an idle period
-can show as a **failed delivery in GitHub's UI even though BuildDoctor handled
-it fine**. Render grants 750 free instance-hours per workspace per month and an
-always-on service uses about 730, so a keep-alive ping every 10 minutes fits
-inside the budget and avoids the confusion.
+An earlier version of this section said a cold-start delivery shows as failed
+in GitHub's UI "even though BuildDoctor handled it fine". **That was wrong**,
+and the correction matters more than the original claim did.
+
+Checked against the current docs rather than from memory:
+
+| Fact | Source |
+| ---- | ------ |
+| Render "spins down a Free web service that goes 15 minutes without receiving any inbound traffic" | [Render](https://render.com/docs/free) |
+| Spinning back up "takes about one minute" | [Render](https://render.com/docs/free) |
+| GitHub records a failure if the server "takes longer than 10 seconds to respond" | [GitHub](https://docs.github.com/en/webhooks/using-webhooks/handling-failed-webhook-deliveries) |
+| "GitHub does not automatically redeliver failed webhook deliveries" | [GitHub](https://docs.github.com/en/webhooks/using-webhooks/handling-failed-webhook-deliveries) |
+
+One minute is not ten seconds. So a build that fails while the service is
+asleep is not *delayed* and it is not *mishandled* - it is **never received**.
+GitHub times out, never tries again, and BuildDoctor has no idea the run
+existed. Nothing in the application can detect or log this, because the request
+never arrived. Failed deliveries can be replayed by hand from the repository's
+webhook settings for **3 days**, and that is the only recovery.
+
+[`.github/workflows/keep-warm.yml`](.github/workflows/keep-warm.yml) pings
+`/health` every 10 minutes, which resets the 15-minute idle timer so deliveries
+land on a warm process. It checks the response *body* rather than the status
+code, because Render "displays a loading page to connecting browsers while a
+service is spinning up" and that page is itself an HTTP 200 - asserting 200
+alone would report a still-booting service as healthy.
+
+**Why a scheduled Action rather than the obvious alternative.** The other real
+fix is Render's paid always-on tier, where nothing spins down and the workflow
+would be unnecessary. That is a recurring monthly cost, so it is a decision for
+whoever owns the account rather than a default. The ping costs nothing.
+
+**Why this repository is public.** Actions minutes are
+[free and unlimited for public repositories](https://docs.github.com/en/billing/concepts/product-billing/github-actions),
+but a private repository on the Free plan gets 2,000 minutes a month, and
+GitHub "rounds the minutes and partial minutes each job uses up to the nearest
+whole minute". A 15-second ping therefore bills a full minute, and one every 10
+minutes around the clock is 4,320 billed minutes a month - the quota is gone in
+about two weeks. Slowing the ping down does not rescue it either: staying under
+2,000 means one ping every ~22 minutes, which is longer than the 15-minute
+sleep window and so keeps nothing warm. **A 24/7 keep-warm inside a private
+repository's free quota is arithmetically impossible.** Making the repository
+public is what makes the ping free, and Phase 10 verified that no secret has
+ever existed in this repository's git history before doing it.
+
+**It narrows the window; it does not close it.** GitHub's own docs warn the
+`schedule` event "can be delayed during periods of high loads" and that "some
+queued jobs may be dropped". A late or skipped ping can still let the idle
+timer reach 15 minutes. Scheduled workflows also only run on the default
+branch, so this file does nothing until it is on `master`.
 
 ## Running with Docker (the normal way)
 

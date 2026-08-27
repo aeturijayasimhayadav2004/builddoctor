@@ -1,0 +1,94 @@
+# Keeps the production service awake so webhook deliveries are not lost.
+#
+# THE PROBLEM THIS SOLVES
+#
+# Render spins down a free web service after 15 minutes without inbound
+# traffic, and spinning back up "takes about one minute". GitHub gives a
+# webhook 10 seconds to respond and - this is the part that matters -
+# "does not automatically redeliver failed webhook deliveries".
+#
+# One minute is not ten seconds. So a build that fails while the service
+# is asleep is not delayed, it is LOST: GitHub records a timeout, never
+# tries again, and BuildDoctor never learns the run happened. Nothing in
+# the app can detect this, because the request never arrived.
+#
+# Pinging /health resets the 15-minute idle timer, so the service stays
+# up and the delivery lands on a warm process.
+#
+# WHY THIS IS THE FREE-TIER FIX
+#
+# The other real fix is Render's paid always-on tier, where nothing ever
+# spins down and this file would be unnecessary. That is a recurring
+# monthly cost, so it is a decision for the repository owner, not a
+# default. This costs nothing beyond CI minutes.
+#
+# WHY IT IS NOT AIRTIGHT
+#
+# GitHub's own docs warn the schedule event "can be delayed during periods
+# of high loads" and that "some queued jobs may be dropped". A skipped or
+# late ping can let the idle timer reach 15 minutes. This narrows the
+# window a great deal; it does not close it. Anything lost anyway can be
+# replayed by hand from the repository's webhook settings for 3 days.
+#
+# Scheduled workflows only run on the default branch, so this file has no
+# effect until it is on master.
+
+name: keep-warm
+
+on:
+  schedule:
+    # Every 10 minutes, against a 15-minute idle timeout, leaving 5
+    # minutes of slack for GitHub's scheduling drift.
+    - cron: "*/10 * * * *"
+  # So the ping can be fired by hand from the Actions tab, which is also
+  # how to test this without waiting for the next slot.
+  workflow_dispatch:
+
+# This job reads nothing and writes nothing in the repository. Handing it
+# no token at all is the accurate description of what it needs.
+permissions: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    # A hung request must not sit there burning billable minutes.
+    timeout-minutes: 5
+    steps:
+      - name: Ping production /health
+        run: |
+          set -euo pipefail
+
+          URL="https://builddoctor.onrender.com/health"
+
+          # No actions/checkout: there is nothing in the repository this
+          # job needs, and cloning would only cost time.
+          #
+          # --max-time 120 because a cold start is about a minute, and
+          # this ping is allowed to be the request that pays for it.
+          BODY=$(curl --silent --show-error --location \
+                      --max-time 120 \
+                      --retry 3 --retry-delay 10 --retry-connrefused \
+                      --write-out '\n%{http_code} %{time_total}' \
+                      "$URL")
+
+          STATUS=$(printf '%s' "$BODY" | tail -n1)
+          PAYLOAD=$(printf '%s' "$BODY" | sed '$d')
+
+          echo "HTTP status / seconds: $STATUS"
+          echo "body: $PAYLOAD"
+
+          # Checking the body, not just the status code, is deliberate.
+          # Render "displays a loading page to connecting browsers while
+          # a service is spinning up" - that page is itself an HTTP 200.
+          # Asserting 200 alone would report a service as healthy while
+          # it was still booting and still dropping webhooks.
+          case "$PAYLOAD" in
+            *'"status":"ok"'*)
+              echo "awake and healthy"
+              ;;
+            *)
+              echo "::error::/health did not return the expected payload."
+              echo "::error::The service may be spinning up, or genuinely down."
+              exit 1
+              ;;
+          esac
