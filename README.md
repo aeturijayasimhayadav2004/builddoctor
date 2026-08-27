@@ -806,6 +806,13 @@ base64-encoded onto a single line. This is the only GitHub credential in the
 project, and it replaced the fine-grained personal access token that every
 earlier phase used.
 
+> The old PAT was removed from the code, from `.env` and from Render, but was
+> **deliberately not revoked** - it is kept for possible later use. It
+> therefore still exists and is still valid on GitHub's side. Nothing here
+> reads it, which also means nothing here would notice if it were misused; its
+> only remaining protection is the repository scope it was issued with. Revoke
+> it at <https://github.com/settings/personal-access-tokens> if that changes.
+
 Base64 rather than the raw PEM because a PEM is multi-line and an environment
 variable - especially a hosting dashboard's one-line input box - is not.
 Encode it **without printing it**:
