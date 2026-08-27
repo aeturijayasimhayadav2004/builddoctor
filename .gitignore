@@ -20,3 +20,11 @@ diagnoses.jsonl
 # machine-readable form of the same run, rewritten every time run_eval.py
 # is invoked, so committing it would be pure churn.
 eval/last_run.json
+.neon
+
+# Agent skills vendored by `npx skills add` (Neon CLI/Postgres helpers).
+# Reinstallable from skills-lock.json, which IS committed - same rule as
+# node_modules versus package-lock.json. .claude/skills holds symlinks into
+# .agents, which do not survive a checkout on Windows anyway.
+.agents/
+.claude/

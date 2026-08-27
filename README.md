@@ -2,7 +2,11 @@
 
 An agent that watches a GitHub repo and reacts when a CI build fails.
 
-**Current stage: Phase 8.5.** When a workflow run fails, BuildDoctor fetches the
+**Current stage: Phase 9 - deployed.** The backend runs in production at
+**<https://builddoctor.onrender.com>**, against a Neon Postgres. See
+[Production](#production) for the topology and why it is shaped that way.
+
+When a workflow run fails, BuildDoctor fetches the
 logs and the triggering diff, **checks whether anything like this has failed
 before**, asks a model what went wrong *and which of three lanes the failure
 belongs in*, then acts on that decision - comment, re-run, or flag for a
@@ -808,6 +812,116 @@ Groq has a free tier, which is why the project points there.
 **`DATABASE_URL`** - optional. Only read when running *without* Docker;
 `docker-compose.yml` sets its own value, which wins. See the note on hosts
 below.
+
+## Production
+
+Live at **<https://builddoctor.onrender.com>**.
+
+| Piece | Where it runs | Why |
+| ----- | ------------- | --- |
+| App + MCP server | One Render **web service**, Free instance, Oregon | see below |
+| Postgres + pgvector | **Neon**, `aws-us-west-2`, Postgres 18, pgvector 0.8.6 | Render's free database expires; Neon's does not |
+| Dashboard | not deployed yet | Phase 10 |
+
+### Why Neon rather than Render Postgres
+
+Render's own free Postgres **expires 30 days after creation**, with 14 days to
+upgrade before deletion. For most projects that is an annoyance. For this one
+it is fatal: Phase 6 gave BuildDoctor *memory*, and the entire point of the
+pgvector similarity search is recalling failures from weeks ago. A database
+that deletes itself every month is not memory. Neon's free tier does not
+expire, so the diagnoses accumulate for as long as the project lives.
+
+Two details about the connection string, both of which cause failures that do
+not look like configuration problems:
+
+- **It must say `postgresql+psycopg://`, not `postgresql://`.** SQLAlchemy
+  chooses its driver from the URL scheme, and bare `postgresql` means psycopg2 -
+  which this project does not install. The symptom is
+  `ModuleNotFoundError: No module named 'psycopg2'` at import time, before a
+  single line of application code runs. (This is not hypothetical; it is how
+  the first production deploy failed.)
+- **Use Neon's UNPOOLED url.** The variable Neon literally names `DATABASE_URL`
+  is the *pooled* one, routed through PgBouncer in transaction mode. psycopg 3
+  uses prepared statements by default, and the two combine into sporadic
+  `prepared statement "_pg3_0" already exists` errors under concurrency - weeks
+  later, not at startup. SQLAlchemy already runs its own pool with
+  `pool_pre_ping=True`, so PgBouncer adds nothing here.
+
+Neon refuses unencrypted connections outright - verified, not assumed, by
+attempting one with `sslmode=disable` and getting
+`connection is insecure (try using 'sslmode=require')`. Note that `pg_stat_ssl`
+reports `ssl = false` on Neon anyway, because TLS terminates at their proxy;
+that is an artefact of their architecture, not an unencrypted client.
+
+### Why one service instead of three
+
+`docker-compose.yml` runs app, mcp and postgres as separate containers, and the
+obvious translation is three Render services. That is not purchasable on a free
+plan, for two reasons taken from Render's documentation rather than memory:
+
+1. Private services (`type: pserv`) have **no free instance type**.
+2. *"Free web services can send private network requests, but they can't
+   receive them."*
+
+The second closes the door. A free web service cannot stand in for the private
+one, because the app could not **reach** it - not a privacy downgrade, an
+outright disconnection.
+
+So the MCP server moves inside the app's container via
+[`server_combined.py`](server_combined.py). It is still a separate ASGI app,
+still spoken to over real HTTP with a real JSON-RPC handshake, still refusing to
+retry a write whose outcome is unknown. Only the socket changed: loopback
+instead of a private network. Because the difference is a URL rather than a code
+path, one variable switches between them and the same image runs both ways:
+
+```
+compose   MCP_SERVER_URL=http://mcp:8001/mcp
+Render    MCP_SERVER_URL=http://localhost:10000/internal/mcp
+```
+
+One service did not have to mean one *process*, and the first attempt ran both
+uvicorns side by side in the same container. Measured under a real 512 MiB cap
+before deploying:
+
+| Arrangement | Memory | Result |
+| ----------- | ------ | ------ |
+| app + mcp, two processes | 549 MiB | **OOM-killed** |
+| one process, mcp mounted in | 446 MiB | healthy |
+
+The difference is a second Python interpreter importing torch and
+sentence-transformers all over again. Render's free instance is 512 MiB, so the
+second interpreter is the thing that had to go.
+
+### The MCP endpoint is public but unusable
+
+Mounting the MCP server on the public app means `https://<host>/internal/mcp`
+resolves rather than 404s. It still cannot be used: `mcp_server.py`'s
+DNS-rebinding guard compares the `Host` header against `MCP_ALLOWED_HOSTS`,
+which in production names only `localhost:10000` and `127.0.0.1:10000`. A
+request arriving through Render's router carries `Host: <name>.onrender.com`,
+matches nothing, and is answered **421 Misdirected Request** before reaching a
+tool. Verified in both directions before deploying.
+
+That guard is not new and was not weakened for this - it is the same setting
+that already had to name `mcp:8001` under compose. But it is worth naming the
+one way this is weaker than a private service: a private service is unreachable
+because the network has no route to it, whereas this is reachable and refuses. A
+misconfigured guard fails open; a missing route cannot be misconfigured. So
+`MCP_ALLOWED_HOSTS` is load-bearing in production in a way it was not before,
+and widening it to include the public hostname would expose four
+GitHub-writing tools to the internet with no authentication in front of them.
+
+### Free-tier behaviour worth knowing
+
+Render spins a free web service down after **15 minutes** without traffic, and
+this one cold-starts slowly because it loads the embedding model before uvicorn
+serves anything - deliberately, so that a webhook never waits for it. GitHub's
+webhook timeout is 10 seconds, so the first failed build after an idle period
+can show as a **failed delivery in GitHub's UI even though BuildDoctor handled
+it fine**. Render grants 750 free instance-hours per workspace per month and an
+always-on service uses about 730, so a keep-alive ping every 10 minutes fits
+inside the budget and avoids the confusion.
 
 ## Running with Docker (the normal way)
 
