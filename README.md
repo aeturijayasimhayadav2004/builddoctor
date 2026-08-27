@@ -2,15 +2,30 @@
 
 An agent that watches a GitHub repo and reacts when a CI build fails.
 
-**Current stage: Phase 10 - secrets rotated, production kept warm.** The
-backend runs in production at **<https://builddoctor.onrender.com>** and the
-dashboard at **<https://builddoctor-dashboard.onrender.com>**, against a Neon
-Postgres. See [Production](#production) for the topology and why it is shaped
-that way.
+**Current stage: Phase 11 - it authenticates as a GitHub App, gated by an
+allowlist.** The backend runs in production at
+**<https://builddoctor.onrender.com>** and the dashboard at
+**<https://builddoctor-dashboard.onrender.com>**, against a Neon Postgres. See
+[Production](#production) for the topology and why it is shaped that way.
 
-> The dashboard has **no authentication** and `/api/diagnoses` returns every
-> row to anyone who asks. That is Phase 11's job. Until then, treat the
-> dashboard URL as readable by anyone who finds it.
+There is no personal access token anywhere in the system any more. BuildDoctor
+is installed on a repository as the **BuildDoctor CI** GitHub App
+(<https://github.com/apps/builddoctor-ci>), signs a JWT with its own private
+key, and trades it for an installation access token that is scoped to that one
+installation and expires in an hour by itself. See
+[Authentication and access](#authentication-and-access).
+
+> **Two things Phase 11 deliberately did not fix, stated plainly.**
+>
+> 1. The dashboard still has **no authentication**, and `/api/diagnoses`
+>    returns every row to anyone who asks. `diagnoses.installation_id` is now
+>    populated on every new row, but nothing filters on it yet. That is Phase
+>    12's job. Until then, treat the dashboard URL as readable by anyone who
+>    finds it.
+> 2. **Exactly one installation has ever been tested** - a single user
+>    account, on a single repository, that also happens to own the App. No
+>    organisation install, no second tenant, and no case where two
+>    installations are active at once has been exercised even once.
 
 When a workflow run fails, BuildDoctor fetches the
 logs and the triggering diff, **checks whether anything like this has failed
@@ -119,10 +134,11 @@ get wrong.
 | `graph.py` | The LangGraph state machine: classify, route, act |
 | `mcp_server.py` | The four GitHub **actions**, exposed as MCP tools. Runs as its own service |
 | `mcp_client.py` | How `graph.py` calls those tools, over HTTP |
-| `github_client.py` | All GitHub API calls (logs, diffs, comments, labels, re-runs) |
+| `github_client.py` | All GitHub API calls (logs, diffs, comments, labels, re-runs). Every one takes an `installation_id` |
+| `app_auth.py` | The GitHub App identity: signs the JWT, trades it for installation tokens, caches them |
 | `log_excerpt.py` | Cuts a raw CI log down to the lines around the error |
 | `diagnose.py` | Asks the LLM for a diagnosis **and** a lane, as structured JSON |
-| `db.py` | The `diagnoses` table, and every line of SQL in the project |
+| `db.py` | The `diagnoses` and `installations` tables, and every line of SQL in the project |
 | `dashboard.py` | The dashboard's read-only `/api` routes. No writes anywhere in it |
 | `embeddings.py` | Turns a log excerpt into 384 numbers, using a local model |
 | `memory.py` | "Has this failed before?" - the similarity lookup and its threshold |
@@ -785,19 +801,39 @@ stays **on** - the fix is naming the hosts actually served, not disabling it.
 Copy `.env.example` to `.env` and fill it in. The same `.env` is used both by
 `docker compose` and by a local run.
 
-**`GITHUB_TOKEN`** - a fine-grained personal access token from
-<https://github.com/settings/personal-access-tokens>, scoped to the one
-repository you are watching, with these repository permissions:
+**`GITHUB_APP_PRIVATE_KEY_B64`** - the GitHub App's `.pem` private key,
+base64-encoded onto a single line. This is the only GitHub credential in the
+project, and it replaced the fine-grained personal access token that every
+earlier phase used.
 
-| Permission | Level | Needed for |
-| ---------- | ----- | ---------- |
-| Actions | Read and write | listing jobs and downloading logs (read); re-running failed jobs for the amber lane (write) |
-| Contents | Read and write | reading commit diffs, posting commit comments |
-| Issues | Read and write | posting pull request comments, adding the `needs-review` label |
-| Pull requests | Read and write | reading PR diffs |
+Base64 rather than the raw PEM because a PEM is multi-line and an environment
+variable - especially a hosting dashboard's one-line input box - is not.
+Encode it **without printing it**:
 
-With Actions left at Read-only, everything still works except the amber lane,
-which reports a 403 and falls back to leaving a comment.
+```powershell
+python -c "import base64,pathlib,sys;pathlib.Path('key.b64').write_text(base64.b64encode(pathlib.Path(sys.argv[1]).read_bytes()).decode())" your-app.private-key.pem
+```
+
+That writes to a file rather than stdout on purpose. Echoing a key to a
+terminal puts it in the scrollback and in any transcript of that session,
+which is exactly [how the Phase 10 leak
+happened](#how-a-secret-actually-leaked-here-and-what-rotation-did-about-it).
+Delete both the `.pem` and the `.b64` once the value is in place; `*.pem` is
+gitignored as defence in depth.
+
+This key does not expire and cannot be scoped down. Anyone holding it can mint
+an installation token for every place the App is installed - it is strictly
+more dangerous than any token it produces.
+
+**`GITHUB_APP_ID`**, **`GITHUB_APP_CLIENT_ID`**, **`GITHUB_APP_SLUG`** - not
+secrets. Public identifiers from the App's settings page, committed to
+`render.yaml`. The client ID is preferred as the JWT issuer: GitHub's docs now
+say *"Use of the client ID is recommended"*, and the App's own settings page
+repeats the advice. The App ID is kept as a fallback.
+
+**`ALLOWED_ACCOUNTS`** - comma-separated GitHub logins allowed to use
+BuildDoctor. Seeds the decision only; see [the allowlist](#the-allowlist-and-why-it-lives-in-postgres).
+Empty means nobody, and there is no wildcard on purpose.
 
 **`WEBHOOK_SECRET`** - any random string. Generate one with:
 
@@ -805,8 +841,10 @@ which reports a 403 and falls back to leaving a comment.
 python -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-The same value goes in the repository's webhook settings, in the **Secret**
-field. Without it the server accepts unverified requests and warns loudly.
+The same value goes in the **Webhook secret** field of the GitHub App's
+settings. Without it the server accepts unverified requests and warns loudly.
+The App reuses the value the old manual webhook had, so there is one signature
+path to verify rather than two.
 
 **`GROQ_API_KEY`** - from <https://console.groq.com> under **API Keys**.
 Groq has a free tier, which is why the project points there.
@@ -861,6 +899,190 @@ filter that silently failed to filter, followed by printing its output.
 
 `XAI_API_KEY` was removed rather than rotated: it appeared in `.env` but is
 referenced nowhere in the codebase.
+
+## Authentication and access
+
+Phase 11 replaced the single static personal access token with a GitHub App
+identity. The change is not cosmetic. The old token belonged to one human,
+never expired, could not be revoked by the person whose repository it touched,
+and its scope was whatever that human happened to grant it. An installation
+token inverts all four.
+
+### Two credentials, and they are not interchangeable
+
+```
+    the App's private key  ──signs──▶  a JWT  ──trades for──▶  an installation
+    (never expires,                    (10 min max,            access token
+     never leaves the                   worth nothing           (1 hour, scoped
+     server)                            on its own)             to ONE install)
+
+    the JWT                talks only to  /app/*
+    an installation token  talks to       /repos/*
+```
+
+The JWT proves *"I am BuildDoctor."* It cannot read a repository or post a
+comment - the only useful thing it can do is ask for an installation token.
+The installation token proves *"I am BuildDoctor, here"*, carries only the
+permissions that installation accepted, and dies in an hour whether anyone
+remembers to rotate it or not.
+
+All of this lives in [`app_auth.py`](app_auth.py).
+
+### Checked against the current docs, not recalled
+
+Two details had moved, and both changed the plan:
+
+| Checked | Finding | Source |
+| ------- | ------- | ------ |
+| JWT issuer | **"Use of the client ID is recommended"** - not the App ID | [generating a JWT](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-json-web-token-jwt-for-a-github-app) |
+| JWT lifetime | `exp` no more than **10 minutes** ahead; set `iat` 60s in the past for clock drift | same |
+| Token lifetime | installation token **expires after 1 hour** | [authenticating as an installation](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation) |
+| Commit comments | `POST /repos/{owner}/{repo}/commits/{sha}/comments` needs **Contents: write** | [permissions for GitHub Apps](https://docs.github.com/en/rest/authentication/permissions-required-for-github-apps) |
+| `installation.id` | present **"when the event is configured for and sent to a GitHub App"** - conditional, not guaranteed | [webhook events](https://docs.github.com/en/webhooks/webhook-events-and-payloads) |
+| API version | `2022-11-28` still supported until **March 2028**; no change needed | [API versions](https://docs.github.com/en/rest/about-the-rest-api/api-versions) |
+
+The Contents one is the one that would have bitten. Commit comments are the
+output path for every push-triggered failure, and reading the diff for that
+same commit needs only Contents: **read** - so a read-only App would have
+looked healthy right up to the moment it tried to say something, then 403'd.
+
+Because `installation.id` is documented as conditional, `resolve_installation_id`
+falls back to `GET /repos/{owner}/{repo}/installation` rather than assuming
+the field is there.
+
+### Permissions this App actually holds
+
+Confirmed by reading them back from `GET /app` rather than from the settings
+form:
+
+| Permission | Level | Needed for |
+| ---------- | ----- | ---------- |
+| Actions | Read | listing failed jobs, downloading logs |
+| Contents | Read and write | read: commit diffs. write: commit comments |
+| Issues | Read and write | PR conversation comments, the `needs-review` label |
+| Pull requests | Read and write | reading PR diffs |
+| Metadata | Read | mandatory, selected automatically |
+
+Actions is deliberately left at **Read**, so the amber lane's re-run returns
+403 and falls back to leaving a comment - a path
+[`graph.py`](graph.py) already handled. Amber has never fired in production,
+so this costs nothing today. Raising it later means every installation must
+manually **accept** the new permission before it takes effect, which is the
+reason to get this list right the first time.
+
+### Why PyJWT and not a GitHub SDK
+
+PyGithub and githubkit both offer App auth out of the box. Neither was used.
+
+PyGithub is synchronous, so every call would need `asyncio.to_thread` - and,
+more seriously, it brings its own retry behaviour. This project's single most
+carefully argued invariant is that **a failed write is never retried**, because
+a failed response is indistinguishable from a lost one and retrying turns one
+comment into two (see the docstring in [`mcp_client.py`](mcp_client.py)).
+Adopting a library that retries on your behalf deletes that rule silently.
+githubkit is async and would not have that problem, but it is a full SDK
+replacing [`github_client.py`](github_client.py) wholesale - a client rewrite
+in a phase about authentication.
+
+PyJWT plus the `httpx` client already here is about forty lines and touches
+only header generation. It is also what GitHub's own Python example uses.
+
+### Caching, and why not in Postgres
+
+Installation tokens are cached **in memory**, per installation, and refreshed
+five minutes before expiry so a token cannot die midway through the call it
+was fetched for. A per-installation lock, with the cache checked once before
+taking it and again after, means the common case never waits and a cold start
+mints exactly one token rather than one per concurrent webhook.
+
+They are deliberately **not** cached in Postgres. A token is a live GitHub
+credential, and the database is read by a dashboard that currently has no
+authentication in front of it. Storing an hour-long credential somewhere
+reachable that way trades one saved HTTP request for a much worse problem.
+Losing the cache on restart costs exactly one extra API call.
+
+### The installation id crosses the MCP hop; the token never does
+
+Every MCP tool takes an `installation_id` and nothing else identifying. The
+server, which holds the private key, mints the token itself.
+
+A tool argument is logged, echoed back in error messages, and visible to
+anything that can see the JSON-RPC traffic. An installation id is a public
+integer that grants nothing without the private key; an installation token is
+a live credential. Under `docker compose` these genuinely are two containers,
+so this also keeps the token from existing in two processes at once.
+
+### The allowlist, and why it lives in Postgres
+
+`ALLOWED_ACCOUNTS` seeds `is_allowed` when an installation is **first
+recorded**, and is never consulted again. The `installations.is_allowed`
+column is what the gate reads on every webhook.
+
+An environment variable can answer *"should this account be approved by
+default"*, once. It cannot answer *"is this installation allowed right now"*:
+
+- **Changing it needs a redeploy.** On Render's free tier a redeploy is a cold
+  start, so revoking a misbehaving installation would take the service down
+  for a minute - the exact failure Phase 10 spent its time removing.
+- **Nothing in the product could ever grant or revoke access.** Phase 13
+  opening this up means an approval flow, and an approval flow needs somewhere
+  to write "yes" that is not a source file.
+- **It has no memory.** A row records when an installation appeared, who owns
+  it, and whether it was ever allowed, so a skipped delivery can be explained
+  afterwards.
+- **A login can be reused** after an account is deleted. An installation id
+  cannot move.
+
+The gate runs **before any GitHub call, any model call, or any row written**,
+so a disallowed installation costs one indexed read and nothing else - no
+token minted, no logs downloaded, no money spent with Groq.
+
+It still answers **200**. GitHub judges a webhook endpoint by whether it
+responded, not by whether it agreed to do anything; a non-2xx would show up in
+the App's delivery log as a broken integration. "Received and deliberately
+ignored" is a success.
+
+**This was proved, not assumed.** With `is_allowed` flipped to false and a real
+failing build pushed:
+
+```
+17:58:27  webhook: event=workflow_run action=completed ... conclusion=failure
+17:58:27  SKIPPED .../buildDocterRepo1: installation 157066942 has is_allowed = false.
+17:58:27  INFO: "POST /webhook HTTP/1.1" 200 OK
+```
+
+All in the same second. No diagnosis row appeared over the following three
+minutes - twice as long as the allowed run had taken - and the commit received
+zero comments. Crucially, the App's own delivery log shows that delivery
+**arriving and being answered 200**, which is what separates "the gate worked"
+from "the webhook never came". Flipping the column back produced a normal
+diagnosis on the next build, with no redeploy and no restart.
+
+### Installation lifecycle
+
+The `installation` event is delivered to every GitHub App and cannot be
+unsubscribed. All five actions are handled rather than assuming `created`:
+
+| Action | Effect |
+| ------ | ------ |
+| `created` | insert a row; `is_allowed` set from `ALLOWED_ACCOUNTS` |
+| `deleted` | delete the row, and drop any cached token |
+| `new_permissions_accepted` | refresh the descriptive fields only |
+| `suspend` / `unsuspend` | refresh the descriptive fields only |
+
+`is_allowed` is set **only on creation**. An existing row keeps whatever it
+holds, because that value may have been set by hand - which is exactly what
+Phase 13's approval flow will do. A later event overwriting it from the
+environment variable would silently undo a deliberate revocation.
+
+Suspension does not remove the row. A suspended installation still exists and
+keeps its approval; treating suspension as removal would revoke something an
+unsuspend could not restore.
+
+Uninstall is a **hard delete**, because the row can never be useful again -
+GitHub issues a new installation id on reinstall. Nothing is lost: there is
+deliberately no foreign key from `diagnoses.installation_id` to this table, so
+diagnoses outlive the installation that produced them.
 
 ## Production
 
@@ -1013,6 +1235,57 @@ ever existed in this repository's git history before doing it.
 queued jobs may be dropped". A late or skipped ping can still let the idle
 timer reach 15 minutes. Scheduled workflows also only run on the default
 branch, so this file does nothing until it is on `master`.
+
+### OPEN DEFECT: the schedule has never actually fired
+
+Phase 11 measured this rather than trusting it, and the caveat above turns out
+to understate the problem badly.
+
+`keep-warm.yml` landed on `master` at **10:44 UTC**. Over the following seven
+hours, `*/10 * * * *` should have produced roughly **42 runs**. It produced
+**zero**. The only run in the repository's history is the manual
+`workflow_dispatch` from Phase 10.
+
+Everything that would explain it checks out clean:
+
+| Checked | Value |
+| ------- | ----- |
+| Workflow `state` | `active` |
+| Repository `default_branch` | `master` - and the file is on it |
+| Repository visibility | `public` (unlimited Actions minutes) |
+| `archived` / `disabled` | `false` / `false` |
+| Actions permissions | `enabled: true`, `allowed_actions: all` |
+
+**The cause is not established.** The most likely candidate is that
+`*/10 * * * *` fires on the exact ten-minute boundary, which is the most
+congested slot on GitHub's scheduler, and GitHub documents that queued
+scheduled jobs "may be dropped" under load - but zero out of ~42 is a lot more
+than "delayed", and this has not been proven.
+
+**The consequence is not hypothetical.** The App's very first `ping` delivery,
+at 17:27 UTC, is recorded in the App's delivery log as:
+
+```
+event=ping  status=... context deadline exceeded ... (500)  10s
+```
+
+That is a cold start eating a webhook, ten seconds to the timeout, no
+redelivery - precisely the failure this workflow exists to prevent. It was
+only a ping, so nothing was lost. Had it been a failed build, the diagnosis
+would simply never have happened, and nothing in the application could have
+logged it, because the request never arrived.
+
+The fix to try first is moving the cron off the boundary, which is GitHub's
+own advice for congested schedules:
+
+```yaml
+    - cron: "3,13,23,33,43,53 * * * *"
+```
+
+This is left **unfixed and recorded** rather than quietly patched, because it
+is a defect in Phase 10's deliverable discovered while verifying Phase 11, and
+changing it deserves its own before/after measurement rather than a hopeful
+one-line edit.
 
 ## Running with Docker (the normal way)
 
@@ -1172,12 +1445,31 @@ host and points at port 8000 either way - Docker changes nothing here.
 ngrok http 8000
 ```
 
-The webhook's Payload URL is the printed HTTPS address with `/webhook`
-appended. On the free plan this address changes every restart, and the
-webhook settings have to be updated to match.
+The Webhook URL is the printed HTTPS address with `/webhook` appended. On the
+free plan this address changes every restart, and the App's settings have to
+be updated to match.
 
-Webhook settings: content type `application/json`, secret set, and only the
-**Workflow runs** event selected.
+Since Phase 11 the webhook is configured **on the GitHub App**, not on the
+repository. That is one field in one place regardless of how many
+repositories the App is installed on, which is the point.
+
+**Installing it on a repository.** Go to
+<https://github.com/apps/builddoctor-ci/installations/new>, choose **Only
+select repositories**, pick the repository, and install. This is the only step
+in the whole project with no API: GitHub has no endpoint that installs an App,
+so it is a human action at github.com.
+
+Installing fires an `installation` event, which creates the row that the
+allowlist gate reads. If that delivery is missed - for example because the
+service was asleep - the row will not exist and every subsequent build is
+skipped as "not in the installations table". Redeliver it from the App's
+**Advanced** tab, or reinstall.
+
+> **Do not leave a manual repository webhook in place alongside the App.**
+> Both deliver the same `workflow_run` event, and both resolve to the same
+> installation, so every failure produces **two** diagnoses and two comments.
+> When migrating, uncheck **Active** on the old hook first - reversible - and
+> delete it once the App path is confirmed.
 
 ## Storage
 
@@ -1188,6 +1480,7 @@ Diagnoses live in the `diagnoses` table in Postgres.
 | `id` | integer | surrogate key; `run_id` is not unique because a workflow can be re-run |
 | `run_id` | **bigint** | must be 64-bit: real run ids are around 3.3e10, well past a 32-bit integer |
 | `repo` | varchar(255) | indexed |
+| `installation_id` | bigint | which GitHub App installation produced it. Indexed. **NULL for rows 1-5**, which predate the App - see below |
 | `created_at` | timestamptz | database clock, so all rows share one time source |
 | `log_excerpt` | text | the trimmed log that was sent to the model |
 | `diff_summary` | jsonb | `files_changed`, `lines_added`, `lines_removed` |
@@ -1209,6 +1502,39 @@ from diagnoses where raw->>'guard_note' is not null;
 
 `raw->>'memory_match'` records whether a past failure was used for that row,
 and how similar it was.
+
+`installation_id` is **permanently nullable**. Rows 1-5 were produced by the
+old personal access token, which had no installation behind it at all, and
+NULL is the honest value for "predates the App" - not zero, and not a guess.
+Every row from Phase 11 onward carries a real one. Phase 9 flagged this column
+as what multi-tenant filtering would need; Phase 11 only **populates** it.
+Nothing filters on it yet, which is why `/api/diagnoses` still returns every
+row to everyone. Getting the data right before anything depends on it means
+the filter, when it lands, is a `WHERE` clause rather than a backfill.
+
+### The `installations` table
+
+One row per place the App is installed.
+
+| Column | Type | Notes |
+| ------ | ---- | ----- |
+| `installation_id` | **bigint**, PK | GitHub's own id, used directly - it is globally unique, permanent, and arrives in every webhook, so a surrogate key would add a lookup and buy nothing |
+| `account_login` | varchar(255) | indexed. A **copy**, not the source of truth: an account can be renamed and this goes stale until the next installation event. The gate keys on the id, which cannot |
+| `account_type` | varchar(32) | `User` or `Organization` |
+| `created_at` | timestamptz | |
+| `is_allowed` | boolean | **the gate.** `NOT NULL`, `server_default false` |
+
+The default is spelled as SQL `false` rather than only a Python default, so a
+row inserted by hand - psql, a migration, anything that is not `db.py` - also
+lands closed. A default that exists only in Python is a default that can be
+bypassed.
+
+Grant or revoke access with one statement, taking effect on the next webhook
+with no deploy and no restart:
+
+```sql
+update installations set is_allowed = true where installation_id = 157066942;
+```
 
 ### Schema changes without Alembic
 
