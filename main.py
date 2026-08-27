@@ -31,7 +31,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 
 # Reads .env into the environment. This has to run BEFORE db is imported:
 # db builds its engine at import time and reads DATABASE_URL right then.
@@ -39,6 +39,7 @@ from fastapi.responses import JSONResponse
 # are less fussy - db is not.)
 load_dotenv()
 
+import app_auth  # noqa: E402
 import dashboard  # noqa: E402
 import db  # noqa: E402
 import diagnose  # noqa: E402
@@ -127,6 +128,78 @@ async def health():
     return {"status": "ok"}
 
 
+# The public install URL, github.com/apps/<slug>. Configurable because the
+# slug is decided when the App is registered, not when this code is written.
+APP_SLUG = os.environ.get("GITHUB_APP_SLUG", "").strip()
+
+
+@app.get("/", response_class=HTMLResponse)
+async def landing():
+    """The root page. Phase 9 found a 404 here; this is the minimum fix.
+
+    Deliberately small: what BuildDoctor is, and a way to install it. Phase
+    13 can make it presentable once installs from other people actually
+    matter. Everything here is static - no database query, so this page still
+    answers while the database is waking up.
+
+    The install button is rendered only when GITHUB_APP_SLUG is set. A button
+    pointing at github.com/apps/ with no slug is a 404 with extra steps, and
+    an honest "not configured yet" is more useful than a broken link.
+    """
+    install = (
+        f'<a class="cta" href="https://github.com/apps/{APP_SLUG}/installations/new">'
+        f"Install on GitHub</a>"
+        if APP_SLUG
+        else '<p class="muted">Install link not configured '
+        "(<code>GITHUB_APP_SLUG</code> is unset).</p>"
+    )
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BuildDoctor</title>
+<style>
+  :root {{ color-scheme: dark; }}
+  body {{
+    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    background: #0f1115; color: #e6e8ee;
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 2rem;
+  }}
+  main {{ max-width: 34rem; }}
+  h1 {{ font-size: 1.75rem; margin: 0 0 .5rem; letter-spacing: -.01em; }}
+  p {{ margin: 0 0 1.25rem; color: #a9b0c0; }}
+  .cta {{
+    display: inline-block; padding: .6rem 1.1rem; border-radius: .5rem;
+    background: #2f81f7; color: #fff; text-decoration: none; font-weight: 600;
+  }}
+  .cta:hover {{ background: #4b93f8; }}
+  .muted {{ font-size: .9rem; }}
+  code {{ background: #1b1f27; padding: .1rem .35rem; border-radius: .25rem; }}
+  footer {{ margin-top: 2rem; font-size: .85rem; color: #6b7280; }}
+  a.plain {{ color: #7aa7e8; }}
+</style>
+</head>
+<body>
+<main>
+  <h1>BuildDoctor</h1>
+  <p>
+    When a GitHub Actions build fails, BuildDoctor reads the logs and the
+    change that caused it, works out what broke, and says so on the commit
+    or pull request.
+  </p>
+  {install}
+  <footer>
+    <a class="plain" href="https://github.com/aeturijayasimhayadav2004/builddoctor">Source</a>
+    &nbsp;·&nbsp;
+    <a class="plain" href="/health">Status</a>
+  </footer>
+</main>
+</body>
+</html>"""
+
+
 def signature_is_valid(raw_body: bytes, signature_header: str) -> bool:
     """Verify GitHub's X-Hub-Signature-256 header against the raw body.
 
@@ -178,6 +251,14 @@ async def webhook(request: Request, background: BackgroundTasks):
     else:
         print()
 
+    # The App's own lifecycle. Handled INLINE rather than in the background,
+    # deliberately: it is a single indexed write, and a workflow_run delivery
+    # arriving moments after an install must find the row already there. The
+    # 10-second budget is in no danger from one INSERT.
+    if event == "installation":
+        await handle_installation_event(payload)
+        return {"received": True}
+
     is_failed_run = (
         event == "workflow_run"
         and action == "completed"
@@ -185,12 +266,137 @@ async def webhook(request: Request, background: BackgroundTasks):
     )
 
     if is_failed_run:
+        # THE ALLOWLIST GATE.
+        #
+        # Before any GitHub call, any model call, or any row written. An
+        # installation that is not allowed costs one database read and
+        # nothing else - no tokens minted, no logs downloaded, no money
+        # spent with Groq.
+        #
+        # The answer is still 200. GitHub judges a webhook endpoint by
+        # whether it responded, not by whether it agreed to do anything, and
+        # a non-2xx here would show up in the App's delivery log as a broken
+        # integration. "Received and deliberately ignored" is a success.
+        installation_id = await resolve_and_check(payload)
+        if installation_id is None:
+            return {"received": True, "skipped": "installation not allowed"}
+
         # Respond to GitHub immediately; do the slow work afterwards.
         # GitHub times a delivery out after about 10 seconds.
-        background.add_task(investigate_failure, payload)
+        background.add_task(investigate_failure, payload, installation_id)
         print("  -> failed run detected, diagnosing in the background")
 
     return {"received": True}
+
+
+async def resolve_and_check(payload: dict) -> int | None:
+    """The installation this event belongs to, if it is allowed to be served.
+
+    Returns the id when the pipeline should run, and None when it should not.
+    Collapsing "no installation" and "not allowed" into one None is
+    intentional - the caller has exactly one decision to make - but the two
+    are logged differently, because they need different fixes.
+    """
+    repo = (payload.get("repository") or {}).get("full_name")
+
+    try:
+        installation_id = await app_auth.resolve_installation_id(payload)
+    except app_auth.AppAuthError as exc:
+        print(f"  SKIPPED {repo}: could not resolve the installation - {exc}")
+        return None
+
+    if installation_id is None:
+        print(
+            f"  SKIPPED {repo}: this delivery carries no installation and the "
+            f"App is not installed on that repository. If this came from the "
+            f"old manual webhook, that hook should be deleted."
+        )
+        return None
+
+    allowed = await asyncio.to_thread(db.installation_is_allowed, installation_id)
+    if not allowed:
+        # Say which of the two it is. "Never recorded" means the install
+        # event was missed or predates this code; "recorded but not allowed"
+        # means the gate is working as designed.
+        row = await asyncio.to_thread(db.get_installation, installation_id)
+        if row is None:
+            print(
+                f"  SKIPPED {repo}: installation {installation_id} is not in "
+                f"the installations table, so it has never been approved."
+            )
+        else:
+            print(
+                f"  SKIPPED {repo}: installation {installation_id} "
+                f"({row.account_login}) has is_allowed = false."
+            )
+        return None
+
+    print(f"  installation {installation_id} is allowed")
+    return installation_id
+
+
+async def handle_installation_event(payload: dict) -> None:
+    """Record, update, or delete an installation as its lifecycle changes.
+
+    GitHub sends five actions on this event and they are not all the same
+    shape, so each is handled rather than assuming "created".
+
+      created                     someone installed the App
+      deleted                     someone uninstalled it
+      new_permissions_accepted    permissions changed and were accepted
+      suspend / unsuspend         temporarily disabled without uninstalling
+
+    Only `deleted` removes the row. A suspended installation still exists
+    and keeps whatever approval it had; treating suspension as removal would
+    silently revoke an approval that a later unsuspend could not restore.
+    """
+    action = payload.get("action")
+    installation = payload.get("installation") or {}
+    account = installation.get("account") or {}
+
+    installation_id = installation.get("id")
+    if installation_id is None:
+        print("  installation event with no installation.id - ignored")
+        return
+
+    installation_id = int(installation_id)
+    login = account.get("login") or "unknown"
+    account_type = account.get("type")
+
+    if action == "deleted":
+        removed = await asyncio.to_thread(db.remove_installation, installation_id)
+        # Any cached token for it is now dead. Dropping it here means a
+        # reinstall cannot be served by a stale credential.
+        app_auth.invalidate(installation_id)
+        print(
+            f"  UNINSTALLED: installation {installation_id} ({login}) "
+            f"{'removed' if removed else 'was not on record'}"
+        )
+        return
+
+    row, created = await asyncio.to_thread(
+        db.upsert_installation,
+        installation_id=installation_id,
+        account_login=login,
+        account_type=account_type,
+    )
+
+    if created:
+        verdict = "ALLOWED" if row.is_allowed else "NOT allowed"
+        print(
+            f"  INSTALLED: installation {installation_id} on {login} "
+            f"({account_type}) -> {verdict}"
+        )
+        if not row.is_allowed:
+            print(
+                f"       {login!r} is not in ALLOWED_ACCOUNTS, so this "
+                f"installation will be skipped until is_allowed is set true."
+            )
+    else:
+        print(
+            f"  installation {installation_id} ({login}) updated on "
+            f"action={action!r}; is_allowed left at {row.is_allowed}"
+        )
 
 
 def summarise_diff(diff: str) -> dict:
@@ -219,6 +425,7 @@ async def record_diagnosis(
     *,
     run_id: int,
     repo: str,
+    installation_id: int,
     log_excerpt: str,
     diff_summary: dict,
     diagnosis_text: str,
@@ -236,6 +443,7 @@ async def record_diagnosis(
         db.save_diagnosis,
         run_id=run_id,
         repo=repo,
+        installation_id=installation_id,
         log_excerpt=log_excerpt,
         diff_summary=diff_summary,
         diagnosis_text=diagnosis_text,
@@ -246,7 +454,7 @@ async def record_diagnosis(
     )
 
 
-async def investigate_failure(payload: dict) -> None:
+async def investigate_failure(payload: dict, installation_id: int) -> None:
     """Run the pipeline, and never let an exception escape.
 
     This runs as a background task. An exception escaping here is
@@ -256,7 +464,7 @@ async def investigate_failure(payload: dict) -> None:
     """
     run_id = (payload.get('workflow_run') or {}).get('id')
     try:
-        await _investigate(payload)
+        await _investigate(payload, installation_id)
     except Exception as exc:  # noqa: BLE001
         print(f"\n  PIPELINE FAILED for run {run_id}: "
               f"{type(exc).__name__}: {exc}")
@@ -264,8 +472,14 @@ async def investigate_failure(payload: dict) -> None:
         print(RULE + "\n", flush=True)
 
 
-async def _investigate(payload: dict) -> None:
-    """Gather evidence, classify it, act on the lane, and record it."""
+async def _investigate(payload: dict, installation_id: int) -> None:
+    """Gather evidence, classify it, act on the lane, and record it.
+
+    Every GitHub call below authenticates as `installation_id`. It is passed
+    in rather than re-derived from the payload, so the value the gate
+    approved is provably the same value the work is done with - re-resolving
+    it here would open a gap between what was checked and what was used.
+    """
     repo = payload["repository"]["full_name"]
     run = payload["workflow_run"]
     run_id = run["id"]
@@ -273,12 +487,15 @@ async def _investigate(payload: dict) -> None:
     print("\n" + RULE)
     print("  BUILD FAILED - collecting evidence")
     print(f"  repo={repo}  run_id={run_id}  workflow={run.get('name')!r}")
+    print(f"  installation={installation_id}")
     print(f"  {run.get('html_url')}")
     print(RULE)
 
     # --- 1. which jobs failed, and what did they say -------------------
     try:
-        failed_jobs = await github_client.list_failed_jobs(repo, run_id)
+        failed_jobs = await github_client.list_failed_jobs(
+            installation_id, repo, run_id
+        )
     except github_client.GitHubError as exc:
         print(f"  ERROR listing jobs: {exc}")
         return
@@ -310,7 +527,9 @@ async def _investigate(payload: dict) -> None:
             print(f"       failed step(s): {', '.join(failed_steps)}")
 
         try:
-            text = await github_client.download_job_log(repo, job_id)
+            text = await github_client.download_job_log(
+                installation_id, repo, job_id
+            )
         except Exception as exc:  # noqa: BLE001
             # Deliberately broad. One job's log going missing is not a
             # reason to abandon the diagnosis - the other jobs, and the
@@ -350,7 +569,7 @@ async def _investigate(payload: dict) -> None:
 
     # --- 3. the change that triggered the run --------------------------
     try:
-        diff_info = await github_client.get_diff_for_run(payload)
+        diff_info = await github_client.get_diff_for_run(installation_id, payload)
     except github_client.GitHubError as exc:
         print(f"  ERROR fetching diff: {exc}")
         return
@@ -406,6 +625,7 @@ async def _investigate(payload: dict) -> None:
     initial: graph.BuildState = {
         "payload": payload,
         "repo": repo,
+        "installation_id": installation_id,
         "run": run,
         "run_id": run_id,
         "run_attempt": run_attempt,
@@ -457,6 +677,7 @@ async def _investigate(payload: dict) -> None:
         row_id = await record_diagnosis(
             run_id=run_id,
             repo=repo,
+            installation_id=installation_id,
             log_excerpt=combined_excerpt,
             diff_summary=summarise_diff(diff_text),
             diagnosis_text=diagnosis,

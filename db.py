@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     DateTime,
     Integer,
     String,
@@ -96,6 +97,25 @@ class Diagnosis(Base):
 
     repo: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
 
+    # Which GitHub App installation this diagnosis was produced for.
+    #
+    # NULLABLE, permanently. Rows 1-5 were made by the old static personal
+    # access token, which had no installation behind it at all, and NULL is
+    # the honest value for "predates the App" - not zero, and not a guess.
+    # Every row written from Phase 11 onward carries a real id.
+    #
+    # Phase 9 flagged this column as the thing multi-tenant filtering will
+    # need. Phase 11 only POPULATES it: nothing reads it as a filter yet, so
+    # /api/diagnoses still returns every row to everyone. Making the data
+    # correct before anything depends on it means the filter, when it lands,
+    # is a WHERE clause rather than a backfill.
+    #
+    # BigInteger for the same reason run_id is: these ids are already
+    # eight digits and there is no reason to bet on the ceiling.
+    installation_id: Mapped[int | None] = mapped_column(
+        BigInteger, index=True, nullable=True
+    )
+
     # TIMESTAMPTZ. Stores an absolute instant rather than ambiguous
     # wall-clock digits. Defaulted by the database so every row shares one
     # clock, whichever machine inserted it.
@@ -146,6 +166,86 @@ class Diagnosis(Base):
         return (
             f"<Diagnosis id={self.id} run_id={self.run_id} "
             f"repo={self.repo!r} posted_to={self.posted_to!r}>"
+        )
+
+
+class Installation(Base):
+    """One place the GitHub App has been installed.
+
+    WHY is_allowed IS A COLUMN AND NOT AN ENV VAR
+
+    The obvious cheap version of a gate is a comma-separated env var read at
+    request time - and ALLOWED_ACCOUNTS below is exactly that, so the cheap
+    version does exist here. It is just not the thing the gate reads.
+
+    The difference is what each one can answer. An env var can answer "should
+    this account be let in by default", once, at install time. It cannot
+    answer "is THIS installation allowed right now", because:
+
+      * Changing it requires an edit and a redeploy. On Render's free tier a
+        redeploy is a cold start, so revoking access to a misbehaving install
+        would take the whole service down for a minute - the exact failure
+        Phase 10 spent its time removing.
+      * It cannot be changed from anywhere but a deploy pipeline, so nothing
+        in the product can ever grant or revoke access. Phase 13 opening this
+        up means an approval flow, and an approval flow needs somewhere to
+        write "yes" that is not a source file.
+      * It has no memory. A row records when an installation appeared, who
+        owns it, and whether it was ever allowed, so a request that got
+        skipped can be explained afterwards. An env var explains nothing.
+      * Two accounts can legitimately have the same login at different times
+        (an account gets deleted and the name is reused). An installation id
+        does not move.
+
+    So the env var seeds the decision and the column HOLDS it. Flipping one
+    boolean in Postgres changes behaviour on the next webhook with no deploy,
+    which is precisely what Phase 13 will need and what proving the gate
+    works needs today.
+    """
+
+    __tablename__ = "installations"
+
+    # GitHub's own id, used directly as the primary key rather than a
+    # surrogate. It is globally unique, permanent for the life of the
+    # installation, and it is the value that arrives in every webhook - so a
+    # surrogate key would add a lookup and buy nothing.
+    installation_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+
+    # The user or organisation the App is installed on.
+    #
+    # A COPY, not the source of truth: an account can be renamed and this
+    # column will then be stale until the next installation event refreshes
+    # it. It is stored anyway because it is what a human reads when deciding
+    # whether to allow something, and because the allowlist is expressed in
+    # logins. The gate itself keys on installation_id, which cannot go stale.
+    account_login: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+
+    # "User" or "Organization", straight from the payload. Kept because the
+    # two behave differently once multi-tenancy is real - an org install can
+    # be administered by people other than whoever clicked install.
+    account_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+    # THE GATE. False by default, and that default is the point: an
+    # installation that nobody has explicitly approved does nothing.
+    #
+    # server_default is spelled as SQL "false" rather than a Python default
+    # so that a row inserted by hand - psql, a migration, anything that is
+    # not this file - also lands closed. A default that only exists in
+    # Python is a default that can be bypassed.
+    is_allowed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<Installation id={self.installation_id} "
+            f"account={self.account_login!r} allowed={self.is_allowed}>"
         )
 
 
@@ -202,6 +302,24 @@ MIGRATIONS = (
         f"ALTER TABLE diagnoses ADD COLUMN IF NOT EXISTS "
         f"embedding vector({EMBEDDING_DIM})",
     ),
+    # Phase 11. Same additive shape as the Phase 6 column above, and additive
+    # for the same reason: the five existing rows predate the App entirely, so
+    # the honest value for them is NULL and no backfill is possible or wanted.
+    #
+    # The `installations` TABLE needs no statement here - it does not exist
+    # yet, so create_all() builds it. Only a change to a table that already
+    # holds data needs an ALTER, which is the distinction the note above
+    # explains.
+    (
+        "add diagnoses.installation_id",
+        "ALTER TABLE diagnoses ADD COLUMN IF NOT EXISTS "
+        "installation_id BIGINT",
+    ),
+    (
+        "index diagnoses.installation_id",
+        "CREATE INDEX IF NOT EXISTS ix_diagnoses_installation_id "
+        "ON diagnoses (installation_id)",
+    ),
 )
 
 
@@ -238,15 +356,20 @@ def save_diagnosis(
     created_at: datetime | None = None,
     raw: dict | None = None,
     embedding: list[float] | None = None,
+    installation_id: int | None = None,
 ) -> int:
     """Insert one diagnosis. Returns its new primary key.
 
     Keyword-only: every argument here is a string or a dict, and positional
     calls would be silently reorderable.
+
+    installation_id defaults to None so the migration script and any older
+    caller keep working unchanged; the pipeline always passes a real one.
     """
     row = Diagnosis(
         run_id=run_id,
         repo=repo,
+        installation_id=installation_id,
         log_excerpt=log_excerpt or "",
         diff_summary=diff_summary or {},
         diagnosis_text=diagnosis_text or "",
@@ -266,6 +389,148 @@ def save_diagnosis(
         session.add(row)
         session.commit()
         return row.id
+
+
+# ---------------------------------------------------------------------------
+# Installations and the allowlist (Phase 11)
+# ---------------------------------------------------------------------------
+
+# Comma-separated GitHub logins that are approved AT INSTALL TIME.
+#
+# This seeds is_allowed on a brand new row and is never consulted again - see
+# the long note on the Installation model for why the column, not this
+# variable, is what the gate actually reads.
+#
+# Empty means empty. There is no "allow everything" value on purpose: a
+# misspelled or unset variable must fail CLOSED, and a wildcard is one typo
+# away from opening the App to all of GitHub.
+ALLOWED_ACCOUNTS_VAR = "ALLOWED_ACCOUNTS"
+
+
+def allowed_accounts() -> set[str]:
+    """Logins pre-approved by configuration, casefolded for comparison.
+
+    GitHub treats logins case-insensitively, so "JaySmith" and "jaysmith" are
+    the same account and the allowlist must not care which one was typed.
+    """
+    raw = os.environ.get(ALLOWED_ACCOUNTS_VAR, "")
+    return {part.strip().casefold() for part in raw.split(",") if part.strip()}
+
+
+def account_is_preapproved(login: str | None) -> bool:
+    """Whether this account appears in ALLOWED_ACCOUNTS."""
+    if not login:
+        return False
+    return login.strip().casefold() in allowed_accounts()
+
+
+def get_installation(installation_id: int) -> Installation | None:
+    with Session() as session:
+        return session.get(Installation, installation_id)
+
+
+def installation_is_allowed(installation_id: int | None) -> bool:
+    """THE GATE. False for anything not explicitly recorded as allowed.
+
+    Three cases collapse to False here, and collapsing them is deliberate:
+    an installation that was never recorded, one recorded but not approved,
+    and no installation id at all. The pipeline needs a yes/no, and every
+    one of those three is a no. The caller logs WHICH it was; this decides.
+    """
+    if installation_id is None:
+        return False
+    row = get_installation(installation_id)
+    return bool(row and row.is_allowed)
+
+
+def upsert_installation(
+    *,
+    installation_id: int,
+    account_login: str,
+    account_type: str | None = None,
+) -> tuple[Installation, bool]:
+    """Record an installation. Returns the row and whether it was created.
+
+    Not insert-only. GitHub sends `installation` events for permission
+    changes and for suspend/unsuspend as well as for a fresh install, and a
+    plain INSERT would raise a duplicate-key error on every one of those. It
+    also re-sends `created` on a redelivery.
+
+    IS_ALLOWED IS ONLY EVER SET ON CREATION. An existing row keeps whatever
+    it holds, because that value may have been set by hand - which is exactly
+    what Phase 13's approval flow will do, and exactly what proving the gate
+    works does today. A later event overwriting it from the env var would
+    silently undo a deliberate revocation.
+    """
+    with Session() as session:
+        row = session.get(Installation, installation_id)
+        created = row is None
+
+        if created:
+            row = Installation(
+                installation_id=installation_id,
+                account_login=account_login,
+                account_type=account_type,
+                is_allowed=account_is_preapproved(account_login),
+            )
+            session.add(row)
+        else:
+            # Refresh the descriptive fields - an account can be renamed -
+            # and touch nothing else.
+            row.account_login = account_login
+            if account_type:
+                row.account_type = account_type
+
+        session.commit()
+        session.refresh(row)
+        return row, created
+
+
+def remove_installation(installation_id: int) -> bool:
+    """Delete an installation's row. Returns whether there was one.
+
+    A hard delete, not a flag, and the reason is that the row cannot ever be
+    useful again: GitHub issues a NEW installation id when an App is
+    reinstalled, so this id is dead permanently. Keeping it would leave the
+    allowlist full of entries that can never match anything.
+
+    Nothing is lost by deleting it. There is deliberately NO foreign key from
+    diagnoses.installation_id to this table - diagnoses must outlive the
+    installation that produced them - so the history stays intact and still
+    carries the id.
+    """
+    with Session() as session:
+        row = session.get(Installation, installation_id)
+        if row is None:
+            return False
+        session.delete(row)
+        session.commit()
+        return True
+
+
+def set_installation_allowed(installation_id: int, allowed: bool) -> bool:
+    """Flip the gate for one installation. Returns whether the row existed.
+
+    The write half of the reason is_allowed is a column: this takes effect on
+    the very next webhook, with no deploy and no restart.
+    """
+    with Session() as session:
+        row = session.get(Installation, installation_id)
+        if row is None:
+            return False
+        row.is_allowed = allowed
+        session.commit()
+        return True
+
+
+def list_installations() -> list[Installation]:
+    """Every recorded installation, oldest first."""
+    with Session() as session:
+        return list(
+            session.scalars(
+                select(Installation).order_by(Installation.created_at)
+            )
+        )
 
 
 def nearest_by_embedding(

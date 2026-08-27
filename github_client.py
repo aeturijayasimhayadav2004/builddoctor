@@ -12,15 +12,28 @@ Writes, once it has an answer:
 Nothing in this file knows about FastAPI, webhooks, or the lane a failure
 was sorted into; it is plain API access so it can be tested or reused on
 its own.
+
+AUTHENTICATION, SINCE PHASE 11
+
+Every function here takes an `installation_id` and authenticates as that
+GitHub App installation. There is no static token any more and no fallback
+to one - one auth path, not two, so there is no way to be confused about
+which credential a call actually used.
+
+The practical consequence is that `installation_id` is a required argument
+everywhere rather than an optional one with a default. A default would mean
+some call could silently authenticate as the wrong tenant, which is the one
+mistake this whole phase exists to make impossible.
 """
 
 from __future__ import annotations
 
 import asyncio
 import functools
-import os
 
 import httpx
+
+import app_auth
 
 GITHUB_API = "https://api.github.com"
 API_VERSION = "2022-11-28"
@@ -38,34 +51,51 @@ class GitHubError(RuntimeError):
     """Raised when the GitHub API returns something we cannot use."""
 
 
-def _headers(accept: str = JSON_ACCEPT) -> dict:
-    token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if not token:
-        raise GitHubError(
-            "GITHUB_TOKEN is not set. Put it in the .env file next to main.py."
-        )
-    return {
-        "Authorization": f"Bearer {token}",
-        "Accept": accept,
-        "X-GitHub-Api-Version": API_VERSION,
-    }
+async def _headers(installation_id: int, accept: str = JSON_ACCEPT) -> dict:
+    """Headers authenticated as one GitHub App installation.
+
+    Async because minting a token may require a round trip to GitHub. In the
+    common case app_auth answers from its cache and this never awaits
+    anything real.
+    """
+    try:
+        return await app_auth.installation_headers(installation_id, accept)
+    except app_auth.AppAuthError as exc:
+        # Re-raised as GitHubError so that every caller in the pipeline keeps
+        # the single except clause it already has. A failure to authenticate
+        # and a failure to call are the same thing from a lane's point of
+        # view: the action did not happen, and the reason is in the message.
+        raise GitHubError(f"could not authenticate: {exc}") from exc
 
 
-def _check(response: httpx.Response, what: str) -> None:
+def _check(
+    response: httpx.Response, what: str, installation_id: int | None = None
+) -> None:
     """Turn HTTP failures into errors that name their likely cause."""
     status = response.status_code
     if status == 401:
-        raise GitHubError(f"{what}: 401 - token is invalid, expired, or malformed.")
+        # The cached token was rejected. Drop it, so the next call mints a
+        # fresh one instead of replaying a credential GitHub has already
+        # refused - otherwise a revoked or rotated installation keeps failing
+        # for up to an hour until the cache entry ages out on its own.
+        if installation_id is not None:
+            app_auth.invalidate(installation_id)
+        raise GitHubError(
+            f"{what}: 401 - the installation token was rejected. It has been "
+            f"discarded; the next call will mint a new one."
+        )
     if status == 403:
         raise GitHubError(
-            f"{what}: 403 - token is valid but lacks the required permission "
-            f"(needs Actions / Contents / Pull requests: Read-only), "
-            f"or the rate limit is exhausted."
+            f"{what}: 403 - the installation is valid but lacks the required "
+            f"permission (needs Actions: read, Contents: read and write, "
+            f"Issues: read and write, Pull requests: read and write), or the "
+            f"rate limit is exhausted. A permission added after installing "
+            f"must be ACCEPTED on the installation before it takes effect."
         )
     if status == 404:
         raise GitHubError(
-            f"{what}: 404 - wrong repo or id, or the token is not scoped to "
-            f"this repository."
+            f"{what}: 404 - wrong repo or id, or this installation does not "
+            f"cover that repository."
         )
     if status >= 400:
         raise GitHubError(f"{what}: HTTP {status} - {response.text[:300]}")
@@ -129,18 +159,19 @@ def _writes(fn):
 
 
 @_reads
-async def list_failed_jobs(repo: str, run_id: int) -> list:
+async def list_failed_jobs(installation_id: int, repo: str, run_id: int) -> list:
     """Return only the jobs of `run_id` whose conclusion was a failure.
 
     A run can hold many jobs (matrix builds, lint + test + deploy). Most of
     them may be green; only the failed ones are worth reading.
     """
     url = f"{GITHUB_API}/repos/{repo}/actions/runs/{run_id}/jobs"
+    headers = await _headers(installation_id)
     async with httpx.AsyncClient(timeout=TIMEOUT) as client:
         response = await client.get(
-            url, headers=_headers(), params={"per_page": 100, "filter": "latest"}
+            url, headers=headers, params={"per_page": 100, "filter": "latest"}
         )
-    _check(response, "list jobs")
+    _check(response, "list jobs", installation_id)
 
     jobs = response.json().get("jobs", [])
     # Note: a job can also end as "timed_out" or "cancelled". Phase 1 treats
@@ -149,12 +180,13 @@ async def list_failed_jobs(repo: str, run_id: int) -> list:
 
 
 @_reads
-async def download_job_log(repo: str, job_id: int) -> str:
+async def download_job_log(installation_id: int, repo: str, job_id: int) -> str:
     """Return the full plain-text log for one job."""
     url = f"{GITHUB_API}/repos/{repo}/actions/jobs/{job_id}/logs"
+    headers = await _headers(installation_id)
 
     async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False) as client:
-        response = await client.get(url, headers=_headers())
+        response = await client.get(url, headers=headers)
 
         # GitHub replies with a redirect to a short-lived, pre-signed storage
         # URL. That URL authenticates via its own query string and rejects
@@ -166,35 +198,39 @@ async def download_job_log(repo: str, job_id: int) -> str:
                 raise GitHubError("download job log: redirect had no location header")
             response = await client.get(location)
 
-    _check(response, "download job log")
+    _check(response, "download job log", installation_id)
     return response.text
 
 
 @_reads
-async def get_pull_request_diff(repo: str, pr_number: int) -> str:
+async def get_pull_request_diff(
+    installation_id: int, repo: str, pr_number: int
+) -> str:
     """Diff of an entire pull request branch against its base branch."""
     url = f"{GITHUB_API}/repos/{repo}/pulls/{pr_number}"
+    headers = await _headers(installation_id, DIFF_ACCEPT)
     async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
-        response = await client.get(url, headers=_headers(DIFF_ACCEPT))
-    _check(response, f"pull request #{pr_number} diff")
+        response = await client.get(url, headers=headers)
+    _check(response, f"pull request #{pr_number} diff", installation_id)
     return response.text
 
 
 @_reads
-async def get_commit_diff(repo: str, sha: str) -> str:
+async def get_commit_diff(installation_id: int, repo: str, sha: str) -> str:
     """Diff of a single commit against its parent.
 
     Requesting a commit with the diff media type returns exactly that
     comparison, so no separate call to the compare endpoint is needed.
     """
     url = f"{GITHUB_API}/repos/{repo}/commits/{sha}"
+    headers = await _headers(installation_id, DIFF_ACCEPT)
     async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
-        response = await client.get(url, headers=_headers(DIFF_ACCEPT))
-    _check(response, f"commit {sha[:7]} diff")
+        response = await client.get(url, headers=headers)
+    _check(response, f"commit {sha[:7]} diff", installation_id)
     return response.text
 
 
-async def get_diff_for_run(payload: dict) -> dict:
+async def get_diff_for_run(installation_id: int, payload: dict) -> dict:
     """Fetch the change that triggered a run, picking the right comparison.
 
     A run started by a pull request must be diffed as a whole branch against
@@ -211,7 +247,7 @@ async def get_diff_for_run(payload: dict) -> dict:
             "source": "pull_request",
             "ref": f"PR #{number}",
             "description": f"pull request #{number} vs its base branch",
-            "diff": await get_pull_request_diff(repo, number),
+            "diff": await get_pull_request_diff(installation_id, repo, number),
         }
 
     head_sha = run["head_sha"]
@@ -219,7 +255,7 @@ async def get_diff_for_run(payload: dict) -> dict:
         "source": "push",
         "ref": head_sha[:7],
         "description": f"commit {head_sha[:7]} vs its parent",
-        "diff": await get_commit_diff(repo, head_sha),
+        "diff": await get_commit_diff(installation_id, repo, head_sha),
     }
 
 
@@ -237,26 +273,38 @@ async def get_diff_for_run(payload: dict) -> dict:
 
 
 @_writes
-async def post_pull_request_comment(repo: str, pr_number: int, body: str) -> dict:
+async def post_pull_request_comment(
+    installation_id: int, repo: str, pr_number: int, body: str
+) -> dict:
     """Add a conversation comment to a pull request."""
     url = f"{GITHUB_API}/repos/{repo}/issues/{pr_number}/comments"
+    headers = await _headers(installation_id)
     async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
-        response = await client.post(url, headers=_headers(), json={"body": body})
-    _check(response, f"comment on PR #{pr_number}")
+        response = await client.post(url, headers=headers, json={"body": body})
+    _check(response, f"comment on PR #{pr_number}", installation_id)
     return response.json()
 
 
 @_writes
-async def post_commit_comment(repo: str, sha: str, body: str) -> dict:
-    """Add a comment directly to a commit."""
+async def post_commit_comment(
+    installation_id: int, repo: str, sha: str, body: str
+) -> dict:
+    """Add a comment directly to a commit.
+
+    Needs the Contents permission at read AND WRITE. Read-only returns 403,
+    which is easy to get wrong because reading the diff for the same commit
+    needs only read - so the pipeline appears to work right up to the moment
+    it tries to say something.
+    """
     url = f"{GITHUB_API}/repos/{repo}/commits/{sha}/comments"
+    headers = await _headers(installation_id)
     async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
-        response = await client.post(url, headers=_headers(), json={"body": body})
-    _check(response, f"comment on commit {sha[:7]}")
+        response = await client.post(url, headers=headers, json={"body": body})
+    _check(response, f"comment on commit {sha[:7]}", installation_id)
     return response.json()
 
 
-async def post_diagnosis(payload: dict, body: str) -> dict:
+async def post_diagnosis(installation_id: int, payload: dict, body: str) -> dict:
     """Post `body` wherever the person who triggered this run will see it.
 
     Uses the same signal as get_diff_for_run: a run belonging to a pull
@@ -268,7 +316,9 @@ async def post_diagnosis(payload: dict, body: str) -> dict:
 
     if pull_requests:
         number = pull_requests[0]["number"]
-        created = await post_pull_request_comment(repo, number, body)
+        created = await post_pull_request_comment(
+            installation_id, repo, number, body
+        )
         return {
             "target": "pull_request",
             "ref": f"PR #{number}",
@@ -276,7 +326,7 @@ async def post_diagnosis(payload: dict, body: str) -> dict:
         }
 
     head_sha = run["head_sha"]
-    created = await post_commit_comment(repo, head_sha, body)
+    created = await post_commit_comment(installation_id, repo, head_sha, body)
     return {
         "target": "commit",
         "ref": head_sha[:7],
@@ -300,23 +350,29 @@ def pull_request_number(payload: dict) -> int | None:
 
 
 @_writes
-async def rerun_failed_jobs(repo: str, run_id: int) -> None:
+async def rerun_failed_jobs(installation_id: int, repo: str, run_id: int) -> None:
     """Re-run only the failed jobs of a run, leaving the green ones alone.
 
     Needs the Actions permission at Read AND WRITE; read-only returns 403.
+    The App is currently installed with Actions at read only, so this lane
+    is expected to 403 until that is raised - see the note in graph.py, which
+    already falls back to commenting rather than doing nothing.
 
     GitHub answers 201 with an empty body, so there is nothing to return -
     the new attempt appears asynchronously as run_attempt 2 of the same
     run id, which is exactly the counter the amber lane guards against.
     """
     url = f"{GITHUB_API}/repos/{repo}/actions/runs/{run_id}/rerun-failed-jobs"
+    headers = await _headers(installation_id)
     async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
-        response = await client.post(url, headers=_headers())
-    _check(response, f"rerun failed jobs of run {run_id}")
+        response = await client.post(url, headers=headers)
+    _check(response, f"rerun failed jobs of run {run_id}", installation_id)
 
 
 @_writes
-async def add_labels(repo: str, issue_number: int, labels: list) -> list:
+async def add_labels(
+    installation_id: int, repo: str, issue_number: int, labels: list
+) -> list:
     """Add labels to a pull request (a PR is an issue underneath).
 
     GitHub creates a label that does not exist yet, so there is no need to
@@ -324,9 +380,8 @@ async def add_labels(repo: str, issue_number: int, labels: list) -> list:
     present is not an error either, which keeps this safe to repeat.
     """
     url = f"{GITHUB_API}/repos/{repo}/issues/{issue_number}/labels"
+    headers = await _headers(installation_id)
     async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True) as client:
-        response = await client.post(
-            url, headers=_headers(), json={"labels": labels}
-        )
-    _check(response, f"label PR #{issue_number}")
+        response = await client.post(url, headers=headers, json={"labels": labels})
+    _check(response, f"label PR #{issue_number}", installation_id)
     return [item.get("name") for item in response.json()]

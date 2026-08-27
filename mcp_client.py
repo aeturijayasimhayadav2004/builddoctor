@@ -129,39 +129,63 @@ async def _call(tool: str, arguments: dict) -> dict:
 # --------------------------------------------------------------------------
 
 
-async def post_pull_request_comment(repo: str, pr_number: int, body: str) -> dict:
+async def post_pull_request_comment(
+    installation_id: int, repo: str, pr_number: int, body: str
+) -> dict:
     payload = await _call(
         "post_pr_comment",
-        {"repo": repo, "pull_number": pr_number, "body": body},
+        {
+            "installation_id": installation_id,
+            "repo": repo,
+            "pull_number": pr_number,
+            "body": body,
+        },
     )
     return {"html_url": payload.get("url"), "id": payload.get("id")}
 
 
-async def post_commit_comment(repo: str, sha: str, body: str) -> dict:
+async def post_commit_comment(
+    installation_id: int, repo: str, sha: str, body: str
+) -> dict:
     payload = await _call(
         "post_commit_comment",
-        {"repo": repo, "commit_sha": sha, "body": body},
+        {
+            "installation_id": installation_id,
+            "repo": repo,
+            "commit_sha": sha,
+            "body": body,
+        },
     )
     return {"html_url": payload.get("url"), "id": payload.get("id")}
 
 
-async def add_labels(repo: str, issue_number: int, labels: list) -> list:
+async def add_labels(
+    installation_id: int, repo: str, issue_number: int, labels: list
+) -> list:
     """Add labels one at a time; the MCP tool takes a single label."""
     added: list = []
     for label in labels:
         payload = await _call(
             "add_pr_label",
-            {"repo": repo, "pull_number": issue_number, "label": label},
+            {
+                "installation_id": installation_id,
+                "repo": repo,
+                "pull_number": issue_number,
+                "label": label,
+            },
         )
         added = payload.get("labels") or added
     return added
 
 
-async def rerun_failed_jobs(repo: str, run_id: int) -> None:
-    await _call("rerun_workflow_job", {"repo": repo, "run_id": run_id})
+async def rerun_failed_jobs(installation_id: int, repo: str, run_id: int) -> None:
+    await _call(
+        "rerun_workflow_job",
+        {"installation_id": installation_id, "repo": repo, "run_id": run_id},
+    )
 
 
-async def post_diagnosis(payload: dict, body: str) -> dict:
+async def post_diagnosis(installation_id: int, payload: dict, body: str) -> dict:
     """Post `body` wherever the person who triggered this run will see it.
 
     The PR-or-push decision stays on the client side deliberately. The MCP
@@ -177,7 +201,9 @@ async def post_diagnosis(payload: dict, body: str) -> dict:
     number = github_client.pull_request_number(payload)
 
     if number is not None:
-        created = await post_pull_request_comment(repo, number, body)
+        created = await post_pull_request_comment(
+            installation_id, repo, number, body
+        )
         return {
             "target": "pull_request",
             "ref": f"PR #{number}",
@@ -185,7 +211,7 @@ async def post_diagnosis(payload: dict, body: str) -> dict:
         }
 
     head_sha = run["head_sha"]
-    created = await post_commit_comment(repo, head_sha, body)
+    created = await post_commit_comment(installation_id, repo, head_sha, body)
     return {
         "target": "commit",
         "ref": head_sha[:7],

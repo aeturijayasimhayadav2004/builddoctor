@@ -62,6 +62,11 @@ class BuildState(TypedDict, total=False):
     # --- provided by main.py before the graph starts ---
     payload: dict           # the raw webhook body
     repo: str               # owner/name
+    # Which GitHub App installation this run belongs to. Every action node
+    # authenticates as it, so a node cannot accidentally act on one tenant's
+    # repository with another tenant's credentials. main.py resolves it and
+    # refuses to start the graph without it, so it is always present here.
+    installation_id: int
     run: dict               # payload["workflow_run"]
     run_id: int
     run_attempt: int        # GitHub's own counter: 1 = first try
@@ -119,7 +124,7 @@ async def _post(state: BuildState, prefix: str = "") -> dict:
     """Post the diagnosis where the person who broke the build is looking."""
     try:
         posted = await mcp_client.post_diagnosis(
-            state["payload"], build_comment(state, prefix)
+            state["installation_id"], state["payload"], build_comment(state, prefix)
         )
         print(f"       posted as {posted['target']} comment on {posted['ref']}")
         print(f"       {posted['url']}")
@@ -213,12 +218,16 @@ async def safe_auto_fix(state: BuildState) -> dict:
 
     print("  [amber] safe_auto_fix: re-running the failed jobs")
     try:
-        await mcp_client.rerun_failed_jobs(state["repo"], state["run_id"])
+        await mcp_client.rerun_failed_jobs(
+            state["installation_id"], state["repo"], state["run_id"]
+        )
         print("       re-run requested; it will appear as run_attempt 2")
         return {"action": "rerun requested", "rerun_requested": True}
     except github_client.GitHubError as exc:
-        # Most likely the token lacks Actions: Read and write. Fall back to
-        # saying something rather than silently doing nothing.
+        # Most likely the installation has Actions at read only, which is
+        # how the App is currently configured on purpose - see the note in
+        # github_client.rerun_failed_jobs. Fall back to saying something
+        # rather than silently doing nothing.
         print(f"       ERROR requesting re-run: {exc}")
         return {
             "action": f"rerun failed ({exc})",
@@ -250,7 +259,7 @@ async def needs_review(state: BuildState) -> dict:
     labels: list = []
     try:
         labels = await mcp_client.add_labels(
-            state["repo"], number, [NEEDS_REVIEW_LABEL]
+            state["installation_id"], state["repo"], number, [NEEDS_REVIEW_LABEL]
         )
         print(f"       labels now: {', '.join(labels)}")
     except github_client.GitHubError as exc:

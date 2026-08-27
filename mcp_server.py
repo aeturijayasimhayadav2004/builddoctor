@@ -23,6 +23,22 @@ two that can drift apart.
 Runs over the Streamable HTTP transport (not the deprecated SSE one), and
 is served as an ordinary ASGI app so uvicorn can host it exactly like the
 main app.
+
+WHAT CROSSES THE WIRE, SINCE PHASE 11
+
+Every tool now takes an `installation_id`, and that is ALL it takes. The
+installation's access token is never sent as a tool argument.
+
+This is the whole reason the argument is an id and not a credential. A tool
+argument is logged, echoed back in error messages, and visible to anything
+that can see the JSON-RPC traffic. An installation token is a live GitHub
+credential valid for an hour. An installation ID is a public integer that
+grants nothing on its own - useless without the App's private key.
+
+So the client says WHICH installation to act as, and the server, which holds
+the private key, decides what that is worth. Moving the minting to the
+server side also means the token never exists in two processes at once under
+docker compose, where these genuinely are two containers.
 """
 
 from __future__ import annotations
@@ -91,12 +107,28 @@ NOT_REPEATABLE = ToolAnnotations(
     open_world_hint=True,
 )
 
+# Declared once and shared by all four tools. The description is what a model
+# reads when it has to supply this value, so it says where the number comes
+# from rather than merely what type it is.
+InstallationId = Annotated[
+    int,
+    Field(
+        description=(
+            "The GitHub App installation to act as. Comes from the "
+            "installation.id field of the webhook that triggered this work. "
+            "Not a secret and not a credential - the server holds the App's "
+            "private key and mints the actual token itself."
+        )
+    ),
+]
+
 
 @mcp.tool(
     name="post_pr_comment",
     annotations=NOT_REPEATABLE,
 )
 async def post_pr_comment(
+    installation_id: InstallationId,
     repo: Annotated[str, Field(description='Repository as "owner/name", for example "octocat/hello-world".')],
     pull_number: Annotated[int, Field(description='Pull request number, as shown in its URL.')],
     body: Annotated[str, Field(description='Comment text. GitHub-flavoured Markdown is rendered.')],
@@ -114,7 +146,9 @@ async def post_pr_comment(
     outcome is unknown must not be retried - retrying turns one comment
     into two.
     """
-    created = await github_client.post_pull_request_comment(repo, pull_number, body)
+    created = await github_client.post_pull_request_comment(
+        installation_id, repo, pull_number, body
+    )
     print(f"  [tool] post_pr_comment repo={repo} pr=#{pull_number} -> ok", flush=True)
     return CommentResult(url=created.get("html_url"), id=created.get("id"))
 
@@ -124,6 +158,7 @@ async def post_pr_comment(
     annotations=NOT_REPEATABLE,
 )
 async def post_commit_comment(
+    installation_id: InstallationId,
     repo: Annotated[str, Field(description='Repository as "owner/name", for example "octocat/hello-world".')],
     commit_sha: Annotated[str, Field(description='Full 40-character commit SHA to attach the comment to.')],
     body: Annotated[str, Field(description='Comment text. GitHub-flavoured Markdown is rendered.')],
@@ -140,7 +175,9 @@ async def post_commit_comment(
 
     NOT repeatable. Each call creates another comment.
     """
-    created = await github_client.post_commit_comment(repo, commit_sha, body)
+    created = await github_client.post_commit_comment(
+        installation_id, repo, commit_sha, body
+    )
     print(
         f"  [tool] post_commit_comment repo={repo} sha={commit_sha[:7]} -> ok",
         flush=True,
@@ -160,6 +197,7 @@ async def post_commit_comment(
     ),
 )
 async def add_pr_label(
+    installation_id: InstallationId,
     repo: Annotated[str, Field(description='Repository as "owner/name", for example "octocat/hello-world".')],
     pull_number: Annotated[int, Field(description='Pull request number, as shown in its URL.')],
     label: Annotated[str, Field(description='Label name to add, for example "needs-review". Created automatically if it does not exist.')],
@@ -176,7 +214,9 @@ async def add_pr_label(
     label that is already present does nothing and is not an error, so
     this call is safe to repeat.
     """
-    names = await github_client.add_labels(repo, pull_number, [label])
+    names = await github_client.add_labels(
+        installation_id, repo, pull_number, [label]
+    )
     print(
         f"  [tool] add_pr_label repo={repo} pr=#{pull_number} "
         f"label={label!r} -> {names}",
@@ -190,6 +230,7 @@ async def add_pr_label(
     annotations=NOT_REPEATABLE,
 )
 async def rerun_workflow_job(
+    installation_id: InstallationId,
     repo: Annotated[str, Field(description='Repository as "owner/name", for example "octocat/hello-world".')],
     run_id: Annotated[int, Field(description='Workflow run id whose failed jobs should be re-run.')],
 ) -> RerunResult:
@@ -208,7 +249,7 @@ async def rerun_workflow_job(
     NOT repeatable. Each call starts a new attempt and consumes CI
     minutes, so a call whose outcome is unknown must not be retried.
     """
-    await github_client.rerun_failed_jobs(repo, run_id)
+    await github_client.rerun_failed_jobs(installation_id, repo, run_id)
     print(f"  [tool] rerun_workflow_job repo={repo} run={run_id} -> ok", flush=True)
     return RerunResult(requested=True, run_id=run_id)
 

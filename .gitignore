@@ -28,3 +28,10 @@ eval/last_run.json
 # .agents, which do not survive a checkout on Windows anyway.
 .agents/
 .claude/
+
+# GitHub App private key (Phase 11). The .pem must never be committed - it
+# is the App's whole identity, and anyone holding it can mint installation
+# tokens for every repo the App is installed on. It is stored base64-encoded
+# in GITHUB_APP_PRIVATE_KEY_B64 instead, so no .pem should exist here at all.
+# This line is defence in depth for the moment one is downloaded by mistake.
+*.pem

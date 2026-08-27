@@ -93,17 +93,59 @@ services:
       - key: GROQ_API_KEY
         sync: false
 
-      # The same fine-grained, read-only, single-repo PAT the app already
-      # uses locally. Deliberately NOT the credential used to create this
-      # repo - see the README on why those two are kept apart.
-      - key: GITHUB_TOKEN
+      # THE GITHUB APP'S PRIVATE KEY, base64-encoded onto one line (Phase
+      # 11). This replaced GITHUB_TOKEN, which is gone: there is no personal
+      # access token anywhere in the system any more.
+      #
+      # Base64 because a PEM is multi-line and this field is not. Anyone
+      # holding this key can mint an installation token for every place the
+      # App is installed, so it is the most sensitive value in the file -
+      # and unlike the tokens it produces, it does not expire on its own.
+      - key: GITHUB_APP_PRIVATE_KEY_B64
         sync: false
 
-      # Must stay byte-identical to the secret configured in the target
-      # repository's webhook settings, or every delivery fails signature
-      # verification with a 401.
+      # Must stay byte-identical to the Webhook secret field in the GitHub
+      # App's settings, or every delivery fails signature verification with
+      # a 401. The App reuses the same secret the old manual webhook had, so
+      # there is one signature path rather than two.
       - key: WEBHOOK_SECRET
         sync: false
+
+      # ------------------------------------------------------------------
+      # GitHub App identity. Not secret, so these live in the file.
+      #
+      # An App ID, a client ID and a slug are public - they are visible to
+      # anyone who can see the App, and none of them grants anything without
+      # the private key above. Committing them means the blueprint is
+      # complete enough to rebuild the service from, which was the point of
+      # writing it down at all.
+      # ------------------------------------------------------------------
+
+      - key: GITHUB_APP_ID
+        value: "4741324"
+
+      # Preferred over the App ID as the JWT issuer: GitHub's current
+      # documentation says "Use of the client ID is recommended", and the
+      # App's own settings page repeats the advice.
+      - key: GITHUB_APP_CLIENT_ID
+        value: Iv23liGxQlieVPHOtmyw
+
+      # Only used to build the install link on the landing page at /.
+      - key: GITHUB_APP_SLUG
+        value: builddoctor-ci
+
+      # WHO MAY USE BUILDDOCTOR, at install time.
+      #
+      # This seeds is_allowed when an installation is first recorded, and is
+      # never consulted again - the installations.is_allowed COLUMN is what
+      # the gate reads on every webhook. That split is deliberate: changing
+      # this value needs a redeploy, and on a free instance a redeploy is a
+      # cold start, so revoking access here would take the service down for
+      # a minute. Flipping the column takes effect on the next delivery.
+      #
+      # Empty would mean nobody. There is no wildcard, on purpose.
+      - key: ALLOWED_ACCOUNTS
+        value: aeturijayasimhayadav2004
 
       # ------------------------------------------------------------------
       # Topology. Not secret, so these live in the file.

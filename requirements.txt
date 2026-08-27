@@ -36,3 +36,8 @@ sentence-transformers>=3.0
 # Registers the pgvector column type with SQLAlchemy so `embedding` maps to
 # a Python list instead of an opaque string. (Phase 6)
 pgvector>=0.2
+
+# GitHub App auth: sign the RS256 JWT that is traded for an installation
+# access token (Phase 11). The [crypto] extra pulls in `cryptography`, which
+# is what actually does the RSA signing - PyJWT alone cannot do RS256.
+pyjwt[crypto]>=2.8
