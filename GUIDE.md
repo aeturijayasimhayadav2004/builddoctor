@@ -31,7 +31,8 @@ process. BuildDoctor approves the installation itself, and the next failing
 build gets a comment. Nothing to ask anybody for.
 
 **If any of them is private**, the installation waits for the owner to
-approve it by hand. They are notified automatically that you are waiting.
+approve it by hand, and you should message them — see
+[If you are waiting for approval](#if-you-are-waiting-for-approval).
 
 The reason for the split is in the next section, and it is worth thirty
 seconds of your time before you install anything.
@@ -143,10 +144,15 @@ minute — longer if the server was asleep.
 You will see this when the installation includes at least one private
 repository, or when you installed on **All repositories**.
 
-**The owner is notified automatically.** You do not have to chase them, and
-there is no "request approval" button because installing already *is* the
-request. If it has been a long time, message them — this is a hobby project,
-not a rota.
+**Message the owner.** BuildDoctor writes a "waiting for approval" line the
+moment your installation arrives, but where that line *goes* depends on how
+the owner has set it up: it can post into a chat channel, and otherwise it
+goes to the server log, which nobody is watching. On this deployment it goes
+to the log. So assume they do not know, and tell them.
+
+There is no "request approval" button in the dashboard, because there is
+nowhere for it to send anything that the installation itself did not already
+send. Installing *is* the request; the missing piece is the owner reading it.
 
 Once approved, the next failing workflow is diagnosed. Nothing needs
 reinstalling and nothing needs restarting; reload the dashboard to see it.
