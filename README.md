@@ -62,7 +62,10 @@ and not a percentage. The details are in
 
 1. GitHub sends a `workflow_run` webhook when a run finishes.
 2. The signature on that request is verified before anything else happens.
-3. If the run failed, BuildDoctor (in the background, so GitHub gets a fast
+3. The installation it came from is checked against `installations.is_allowed`.
+   A closed gate is logged and dropped here, before any log is downloaded or
+   any model is called.
+4. If the run failed, BuildDoctor (in the background, so GitHub gets a fast
    reply):
    - lists the jobs that failed and downloads their logs
    - cuts each log down to the lines around its `##[error]` markers
@@ -73,11 +76,15 @@ and not a percentage. The details are in
    - runs the action for that lane by calling the MCP server (see below)
    - writes a row to the `diagnoses` table in Postgres, including the lane
      **and an embedding of the log, so this failure is findable next time**
-4. Every row it has ever written is listed on the **dashboard** at
-   <http://localhost:5173>, with no build needed to see it.
-5. A **golden set of 24 known-correct cases** can be run against the real
+5. Every row it has written is listed on the **dashboard** at
+   <https://builddoctor.onrender.com/dashboard/>, behind a GitHub sign-in and
+   scoped to the installations you administer. Under Docker it is
+   <http://localhost:5173>.
+6. A **golden set of 24 known-correct cases** can be run against the real
    classifier at any time, without touching GitHub or the `diagnoses` table,
    to check that a change made it better and not worse.
+7. `python preflight.py` answers "is all of this actually working right now"
+   in about thirty seconds, by asking Render, Neon, Groq and GitHub directly.
 
 ## The three lanes
 
@@ -151,12 +158,19 @@ get wrong.
 | `diagnose.py` | Asks the LLM for a diagnosis **and** a lane, as structured JSON |
 | `db.py` | The `diagnoses` and `installations` tables, and every line of SQL in the project |
 | `dashboard.py` | The dashboard's read-only `/api` routes. No writes anywhere in it |
+| `user_auth.py` | Signing a person in with GitHub OAuth, and the session cookie |
+| `admin.py` | The owner-only routes that approve or revoke an installation |
+| `notify.py` | One line of text to a Discord or Slack webhook. Fire-and-forget |
+| `server_combined.py` | Mounts the app and the MCP server into one process for Render |
 | `embeddings.py` | Turns a log excerpt into 384 numbers, using a local model |
 | `memory.py` | "Has this failed before?" - the similarity lookup and its threshold |
 | `migrate_jsonl.py` | One-time backfill of the old `diagnoses.jsonl` history |
 | `backfill_embeddings.py` | One-time backfill of embeddings for rows written before Phase 6 |
+| `preflight.py` | Asks every external dependency whether it is alive. Run before demoing |
 | `Dockerfile` | One image, used by both the app and the MCP server |
 | `docker-compose.yml` | Runs app + mcp + postgres + frontend together |
+| `render.yaml` | The production service, as a blueprint. One web service, free plan |
+| `GUIDE.md` | The install guide written for somebody who is not the owner |
 | `frontend/` | The React + TypeScript dashboard (Vite). See below |
 | `eval/golden_set.json` | 24 cases with known-correct lanes. The measuring stick |
 | `eval/run_eval.py` | Runs the golden set against the real classifier. Writes nothing |
@@ -1522,6 +1536,12 @@ the App marked as a broken integration.
 Unset is supported rather than degraded: the line goes to the log, and the
 admin panel remains the authoritative list.
 
+**On this deployment it is unset.** That is a deliberate choice and not an
+oversight, but it has a consequence worth stating plainly: nothing reaches
+the operator when a private-repo installation arrives, so it waits until
+somebody looks. This is exactly why [`GUIDE.md`](GUIDE.md) tells an installer
+in bold to message the owner rather than wait to be noticed.
+
 ### Installation lifecycle
 
 The `installation` event is delivered to every GitHub App and cannot be
@@ -2221,7 +2241,7 @@ actually arrive. Nothing sweeps the installations table asking GitHub what
 each repository looks like now, so a delivery lost while the service was
 asleep leaves an approval standing that should have been withdrawn. A poll
 would close that, at the cost of a periodic job on a service whose whole
-Phase 10 was about not having background work. Not worth it at two
+Phase 10 was about not having background work. Not worth it at three
 installations; the trigger to build it is the first missed delivery, not the
 calendar.
 
