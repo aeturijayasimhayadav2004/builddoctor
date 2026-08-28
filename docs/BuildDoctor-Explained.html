@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>BuildDoctor — Complete Technical Reference</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root{
+  --bg:#0E1412; --surface:#161F1B; --surface2:#1B2622;
+  --ink:#E6EDE9; --muted:#93A39D; --dim:#6B7B75;
+  --line:#26332E; --line2:#31413A;
+  --accent:#54CDB4; --accent-dim:#1B3A33;
+  --amber:#DCA544; --amber-dim:#33290F;
+  --danger:#E88476; --danger-dim:#331C18;
+  --violet:#A99BE8; --violet-dim:#241F3D;
+}
+*{box-sizing:border-box;}
+html{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
+body{
+  background:var(--bg); color:var(--ink);
+  font-family:"Source Serif 4",Georgia,serif;
+  font-size:10.5pt; line-height:1.6; margin:0; padding:0;
+}
+h1,h2,h3,h4,.mono,code,pre,th,.label,.eyebrow,.qnum,.pill,.fname{
+  font-family:"Familjen Grotesk","Helvetica Neue",Arial,sans-serif;
+}
+code,pre,.mono,.fname{font-family:"JetBrains Mono",Consolas,monospace;}
+
+@page{ size:A4; margin:15mm 14mm; }
+
+.page{ padding:0; }
+.break{ page-break-before:always; }
+.nobreak{ page-break-inside:avoid; }
+
+/* ---------- cover ---------- */
+.cover{
+  min-height:245mm; display:flex; flex-direction:column;
+  justify-content:center; page-break-after:always;
+  border-left:3px solid var(--accent); padding-left:26px;
+}
+.cover .eyebrow{
+  font-size:9pt; letter-spacing:.2em; text-transform:uppercase;
+  color:var(--accent); font-weight:600; margin-bottom:14px;
+}
+.cover h1{ font-size:40pt; line-height:1.02; margin:0 0 16px; font-weight:700; letter-spacing:-.02em; }
+.cover .sub{ font-size:14pt; color:var(--muted); margin:0 0 34px; max-width:36em; line-height:1.45; }
+.cover .meta{ font-size:9pt; color:var(--dim); font-family:"JetBrains Mono",monospace; line-height:1.9; }
+.cover .meta b{ color:var(--accent); font-weight:400; }
+
+/* ---------- headings ---------- */
+h2{
+  font-size:19pt; font-weight:700; letter-spacing:-.015em;
+  margin:0 0 4px; color:var(--ink);
+}
+.h2rule{ border-bottom:1.5px solid var(--accent); padding-bottom:8px; margin-bottom:18px; }
+.h2rule .eyebrow{
+  font-size:8pt; letter-spacing:.16em; text-transform:uppercase;
+  color:var(--accent); font-weight:600; margin:0 0 6px;
+}
+h3{ font-size:12.5pt; font-weight:600; margin:22px 0 7px; color:var(--ink); }
+h4{ font-size:10.5pt; font-weight:600; margin:16px 0 5px; color:var(--accent); }
+p{ margin:0 0 11px; }
+ul,ol{ margin:0 0 12px; padding-left:19px; }
+li{ margin-bottom:5px; }
+strong{ font-weight:600; color:#F2F7F4; }
+em{ color:var(--muted); }
+
+code{
+  background:var(--surface2); border:1px solid var(--line);
+  border-radius:3px; padding:.5px 4px; font-size:8.8pt; color:var(--accent);
+}
+pre{
+  background:var(--surface); border:1px solid var(--line);
+  border-left:3px solid var(--accent);
+  border-radius:5px; padding:11px 13px; overflow:hidden;
+  font-size:8.3pt; line-height:1.55; margin:0 0 13px;
+  white-space:pre-wrap; word-break:break-word; color:#CFDDD7;
+}
+pre code{ background:none; border:none; padding:0; color:inherit; font-size:inherit; }
+
+/* ---------- tables ---------- */
+table{ border-collapse:collapse; width:100%; font-size:9pt; margin:0 0 15px; }
+th{
+  text-align:left; font-size:7.8pt; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--accent); font-weight:600; padding:0 9px 6px 0;
+  border-bottom:1.5px solid var(--line2);
+}
+td{ padding:7px 9px 7px 0; border-bottom:1px solid var(--line); vertical-align:top; }
+tr:last-child td{ border-bottom:none; }
+.fname{ color:var(--accent); font-size:8.5pt; white-space:nowrap; }
+td.n{ color:var(--dim); font-size:8pt; text-align:right; white-space:nowrap;
+      font-family:"JetBrains Mono",monospace; }
+
+/* ---------- callouts ---------- */
+.box{
+  background:var(--surface); border:1px solid var(--line);
+  border-left:3px solid var(--accent); border-radius:0 6px 6px 0;
+  padding:12px 15px; margin:0 0 15px;
+}
+.box.amber{ border-left-color:var(--amber); }
+.box.red{ border-left-color:var(--danger); }
+.box.violet{ border-left-color:var(--violet); }
+.box > :last-child{ margin-bottom:0; }
+.label{
+  display:block; font-size:7.8pt; font-weight:700; letter-spacing:.13em;
+  text-transform:uppercase; color:var(--accent); margin-bottom:5px;
+}
+.box.amber .label{ color:var(--amber); }
+.box.red .label{ color:var(--danger); }
+.box.violet .label{ color:var(--violet); }
+
+/* ---------- pipeline ---------- */
+.flow{ margin:0 0 16px; }
+.fstep{
+  display:grid; grid-template-columns:26px 1fr; gap:0 12px;
+  padding-bottom:12px; position:relative;
+}
+.fstep::before{
+  content:""; position:absolute; left:12.5px; top:24px; bottom:0;
+  width:1px; background:var(--line2);
+}
+.fstep:last-child::before{ display:none; }
+.fstep .d{
+  width:25px; height:25px; border-radius:50%;
+  border:1.5px solid var(--accent); color:var(--accent);
+  background:var(--bg); display:flex; align-items:center; justify-content:center;
+  font-size:9pt; font-weight:600; font-family:"Familjen Grotesk",sans-serif;
+  position:relative; z-index:1;
+}
+.fstep .c{ padding-top:2px; }
+.fstep .c b{ display:block; font-size:10.5pt; color:var(--ink);
+             font-family:"Familjen Grotesk",sans-serif; font-weight:600; margin-bottom:2px; }
+.fstep .c span{ font-size:9pt; color:var(--muted); }
+.fstep .c span code{ font-size:8.3pt; }
+
+/* ---------- pills ---------- */
+.pill{
+  display:inline-block; font-size:7.5pt; font-weight:600; letter-spacing:.04em;
+  padding:1.5px 7px; border-radius:99px; border:1px solid var(--line2);
+  background:var(--surface2); color:var(--muted); white-space:nowrap;
+}
+.pill.a{ color:var(--accent); border-color:var(--accent); background:var(--accent-dim); }
+.pill.w{ color:var(--amber); border-color:var(--amber); background:var(--amber-dim); }
+.pill.r{ color:var(--danger); border-color:var(--danger); background:var(--danger-dim); }
+.pill.v{ color:var(--violet); border-color:var(--violet); background:var(--violet-dim); }
+
+/* ---------- interview Q ---------- */
+.q{
+  background:var(--surface); border:1px solid var(--line);
+  border-radius:6px; padding:13px 16px; margin:0 0 13px;
+  page-break-inside:avoid;
+}
+.q .qq{
+  font-family:"Familjen Grotesk",sans-serif; font-weight:600;
+  font-size:10.5pt; color:var(--accent); margin:0 0 8px;
+  display:grid; grid-template-columns:auto 1fr; gap:9px; align-items:baseline;
+}
+.qnum{
+  font-size:8pt; color:var(--bg); background:var(--accent);
+  border-radius:3px; padding:1.5px 6px; font-weight:700;
+}
+.q p{ font-size:9.3pt; margin-bottom:8px; }
+.q > :last-child{ margin-bottom:0; }
+.q .tell{
+  font-size:8.5pt; color:var(--amber); border-top:1px solid var(--line);
+  padding-top:7px; margin-top:9px;
+}
+.q .tell b{ color:var(--amber); font-family:"Familjen Grotesk",sans-serif;
+            font-size:7.8pt; letter-spacing:.1em; text-transform:uppercase; }
+
+/* ---------- 2-col ---------- */
+.two{ display:grid; grid-template-columns:1fr 1fr; gap:13px; margin-bottom:15px; }
+.card{
+  background:var(--surface); border:1px solid var(--line);
+  border-radius:6px; padding:13px 15px; page-break-inside:avoid;
+}
+.card h4{ margin-top:0; }
+.card > :last-child{ margin-bottom:0; }
+.card p{ font-size:9pt; margin-bottom:7px; }
+
+/* ---------- misc ---------- */
+.foot{
+  border-top:1px solid var(--line); margin-top:26px; padding-top:12px;
+  font-size:8.5pt; color:var(--dim);
+}
+.toc{ font-size:10pt; }
+.toc li{ margin-bottom:7px; }
+.toc b{ color:var(--accent); font-family:"Familjen Grotesk",sans-serif; }
+.toc span{ color:var(--muted); font-size:9pt; }
+</style>
+</head>
+<body>
+
+<!-- ================= COVER ================= -->
+<div class="cover">
+  <p class="eyebrow">Complete technical reference</p>
+  <h1>BuildDoctor</h1>
+  <p class="sub">A GitHub App that reads failing CI logs, works out what broke, and comments on the commit that caused it. Every file, every external service, every decision — and the questions an interviewer will ask.</p>
+  <div class="meta">
+    Live at <b>builddoctor.onrender.com</b><br>
+    App &nbsp;&nbsp;&nbsp;<b>github.com/apps/builddoctor-ci</b><br>
+    Source <b>github.com/aeturijayasimhayadav2004/builddoctor</b><br>
+    <br>
+    ~9,600 lines &nbsp;·&nbsp; 14 phases &nbsp;·&nbsp; 3 live installations<br>
+    Verified end-to-end 2026-08-28
+  </div>
+</div>
+
+<!-- ================= CONTENTS ================= -->
+<div class="page">
+  <div class="h2rule"><p class="eyebrow">Section 00</p><h2>What is in this document</h2></div>
+  <ol class="toc">
+    <li><b>The thirty-second pitch</b><br><span>What it does, in the words you would use out loud.</span></li>
+    <li><b>The lifecycle of one failing build</b><br><span>Ten steps from GitHub's webhook to a comment on your commit.</span></li>
+    <li><b>Architecture</b><br><span>The four processes, and why they are arranged this way.</span></li>
+    <li><b>Every file, and why it exists</b><br><span>All 19 Python modules, the React app, and the config.</span></li>
+    <li><b>External services</b><br><span>Six things it does not own, what each is for, and what was rejected.</span></li>
+    <li><b>The data model</b><br><span>Two tables, and the one column that governs access.</span></li>
+    <li><b>The decisions worth defending</b><br><span>The parts an interviewer will push on.</span></li>
+    <li><b>Interview questions, with answers</b><br><span>30 questions, easy to hard, and what each is really testing.</span></li>
+    <li><b>Proof it works</b><br><span>A real run, captured today.</span></li>
+  </ol>
+
+  <div class="box violet">
+    <span class="label">How to use this</span>
+    <p>Sections 1–3 are what you say in the first two minutes. Section 7 is what separates a candidate who built something from one who copied a tutorial — every item is a decision with a reason and a rejected alternative. Section 8 is rehearsal.</p>
+    <p><strong>Do not memorise section 4.</strong> Know the shape of it; look up the detail. An interviewer is testing whether you can explain a system, not whether you can recite it.</p>
+  </div>
+</div>
+
+<!-- ================= 1. PITCH ================= -->
+<div class="page break">
+  <div class="h2rule"><p class="eyebrow">Section 01</p><h2>The thirty-second pitch</h2></div>
+
+  <div class="box">
+    <span class="label">Say this</span>
+    <p>"BuildDoctor is a GitHub App that watches repositories for failing CI runs. When a build fails, it downloads the log, cuts it down to the lines around the error, sends that to an LLM along with the code diff that triggered the run, and posts a comment on the commit explaining what broke. It also classifies each failure into one of three lanes — and if the failure looks transient, it re-runs the job by itself."</p>
+    <p>"It remembers. Every diagnosis is stored with a vector embedding of the log, so when a similar failure happens again it passes the previous diagnosis to the model as a hint."</p>
+  </div>
+
+  <h3>The three lanes</h3>
+  <table>
+    <thead><tr><th>Lane</th><th>Meaning</th><th>Action taken</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill a">informational</span></td><td>A real code or config error a human must fix</td><td>Post an explanation, stop</td></tr>
+      <tr><td><span class="pill w">safe_auto_fix</span></td><td>Transient — network blip, flaky test, runner hiccup</td><td>Re-run the failed job automatically</td></tr>
+      <tr><td><span class="pill r">needs_review</span></td><td>Ambiguous, or touches something sensitive</td><td>Flag it for a person</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box amber">
+    <span class="label">The honest boundary — say this before you are asked</span>
+    <p>It <strong>never writes code</strong>. It does not push commits, open pull requests, or edit files, and the App's permissions do not allow it to — <code>contents</code> is <strong>read</strong>. The only write actions are: post a comment, add a label, re-run a job. That limit is deliberate; an agent that edits your code on a guess is a liability, not a feature.</p>
+  </div>
+
+  <h3>Why this is a real project and not a toy</h3>
+  <ul>
+    <li><strong>It has real users.</strong> Three live installations, one belonging to somebody who is not the author.</li>
+    <li><strong>It is measured.</strong> A 24-case golden set scores the classifier at <strong>91.7%</strong> overall, <strong>95.2%</strong> on unambiguous cases. Regressions are caught by re-running it.</li>
+    <li><strong>It fails closed.</strong> Every access decision defaults to "no" when evidence is missing.</li>
+    <li><strong>It survived its own security incident.</strong> A secret leaked in Phase 10; the response is written up in the README rather than hidden.</li>
+  </ul>
+</div>
+
+<!-- ================= 2. LIFECYCLE ================= -->
+<div class="page break">
+  <div class="h2rule"><p class="eyebrow">Section 02</p><h2>The lifecycle of one failing build</h2></div>
+  <p>This is the answer to "walk me through what happens." Ten steps.</p>
+
+  <div class="flow">
+    <div class="fstep"><div class="d">1</div><div class="c"><b>GitHub sends a webhook</b><span>A <code>workflow_run</code> event with action <code>completed</code> hits <code>POST /webhook</code>. GitHub expects a reply within <strong>10 seconds</strong>.</span></div></div>
+    <div class="fstep"><div class="d">2</div><div class="c"><b>Verify the signature</b><span>HMAC-SHA256 over the raw body using <code>WEBHOOK_SECRET</code>, compared with <code>hmac.compare_digest</code>. Fails → 401, nothing else runs. This happens <em>first</em>, before parsing.</span></div></div>
+    <div class="fstep"><div class="d">3</div><div class="c"><b>Check the gate</b><span>Look up <code>installations.is_allowed</code> for this installation id. Closed → log and drop. No log downloaded, no model called, no money spent.</span></div></div>
+    <div class="fstep"><div class="d">4</div><div class="c"><b>Reply 200 immediately, work in the background</b><span>The real work is handed to a background task so GitHub's 10-second clock is never at risk. A slow LLM must not mark the App as a broken integration.</span></div></div>
+    <div class="fstep"><div class="d">5</div><div class="c"><b>Mint a scoped token</b><span><code>app_auth.py</code> signs a JWT with the App's private key, trades it for an <strong>installation access token</strong> scoped to that one installation, expiring in 1 hour. Cached in memory until then.</span></div></div>
+    <div class="fstep"><div class="d">6</div><div class="c"><b>Gather evidence</b><span>List the failed jobs → download their logs → cut each to <strong>5 lines before / 10 after</strong> each <code>##[error]</code> marker → fetch the diff (PR diff, or commit vs parent).</span></div></div>
+    <div class="fstep"><div class="d">7</div><div class="c"><b>Search memory</b><span>Embed the excerpt into 384 dimensions, then a pgvector cosine search over past diagnoses. A match above <strong>0.90</strong> similarity becomes a hint for the model.</span></div></div>
+    <div class="fstep"><div class="d">8</div><div class="c"><b>Classify</b><span>The LangGraph <code>classify</code> node calls the LLM with the excerpt, the diff, and any past match — asking for a diagnosis <em>and</em> a lane, as structured JSON.</span></div></div>
+    <div class="fstep"><div class="d">9</div><div class="c"><b>Route and act</b><span>The graph routes on the lane to an action node, which calls the <strong>MCP server</strong> over HTTP: post a comment, add a label, or re-run the job.</span></div></div>
+    <div class="fstep"><div class="d">10</div><div class="c"><b>Record</b><span>Write a row to <code>diagnoses</code> — repo, run id, lane, excerpt, diff summary, diagnosis text, installation id, and the embedding, so this failure is findable next time.</span></div></div>
+  </div>
+
+  <div class="box">
+    <span class="label">Measured, not estimated</span>
+    <p>End to end, on a warm server: <strong>~18 seconds</strong> from the build failing to the comment appearing. Measured today — see section 9.</p>
+  </div>
+</div>
+
+<!-- ================= 3. ARCHITECTURE ================= -->
+<div class="page break">
+  <div class="h2rule"><p class="eyebrow">Section 03</p><h2>Architecture</h2></div>
+
+  <h3>Four logical components</h3>
+  <table>
+    <thead><tr><th>Component</th><th>Job</th><th>Where it runs</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Web app</strong></td><td>Webhooks, OAuth sign-in, the read API, the admin routes</td><td>FastAPI, one Render web service</td></tr>
+      <tr><td><strong>Agent graph</strong></td><td>Classify → route → act, as a state machine</td><td>LangGraph, in-process</td></tr>
+      <tr><td><strong>MCP server</strong></td><td>The four tools that actually write to GitHub</td><td>Mounted at <code>/internal/mcp</code> in the same process</td></tr>
+      <tr><td><strong>Dashboard</strong></td><td>Every diagnosis, and the approve/revoke panel</td><td>React SPA, served at <code>/dashboard/</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="box violet">
+    <span class="label">The question this design invites</span>
+    <p><em>"Why is the MCP server a separate service at all if it runs in the same process?"</em></p>
+    <p>Because the <strong>boundary is the point</strong>, not the process count. Every action that writes to GitHub is reachable exactly one way — through a described, typed tool call. The agent cannot reach <code>github_client.py</code> directly. That means the complete list of things this agent can do to your repository is four function signatures, and you can read all four in a minute.</p>
+    <p>Under Docker they genuinely are separate containers. On Render they were merged into one process by <code>server_combined.py</code> — because the free tier gives one service, and paying for architectural purity when the boundary is enforced in code anyway is a bad trade.</p>
+  </div>
+
+  <h3>The four MCP tools — the complete write surface</h3>
+  <table>
+    <thead><tr><th>Tool</th><th>Does</th></tr></thead>
+    <tbody>
+      <tr><td><span class="fname">post_pr_comment</span></td><td>Comment on a pull request</td></tr>
+      <tr><td><span class="fname">post_commit_comment</span></td><td>Comment on a commit</td></tr>
+      <tr><td><span class="fname">add_pr_label</span></td><td>Add a label to a PR</td></tr>
+      <tr><td><span class="fname">rerun_workflow_job</span></td><td>Re-run a failed job</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box amber">
+    <span class="label">The re-run loop guard</span>
+    <p>An agent that re-runs failed jobs can loop forever: re-run fails → webhook → re-run. The guard uses GitHub's own <code>run_attempt</code> field — BuildDoctor only ever re-runs attempt 1. Attempt 2 failing is classified but never re-run.</p>
+    <p>Crucially this is <strong>stateless</strong>: the counter is GitHub's, not a variable in memory that a restart would reset. That is the difference between a guard and a hope.</p>
+  </div>
+
+  <h3>The MCP endpoint is public but unusable</h3>
+  <p>The MCP server is mounted inside a public web service, so its URL is reachable. It refuses anyway: <code>mcp_server.py</code> checks the <code>Host</code> header against an allowlist and answers <strong>421 Misdirected Request</strong> on a mismatch. A request through Render's router carries <code>Host: builddoctor.onrender.com</code>, which is not on the list. The app's own call carries <code>Host: localhost:10000</code>, which is.</p>
+  <p><em>Verified both directions before deploying: 421 for a foreign Host, successful handshake listing all four tools over loopback.</em></p>
+</div>
+
+<!-- ================= 4. FILES ================= -->
+<div class="page break">
+  <div class="h2rule"><p class="eyebrow">Section 04</p><h2>Every file, and why it exists</h2></div>
+
+  <h3>Core pipeline — the request path</h3>
+  <table>
+    <thead><tr><th>File</th><th class="n">Lines</th><th>Significance</th></tr></thead>
+    <tbody>
+      <tr><td class="fname">main.py</td><td class="n">1311</td><td><strong>The front door.</strong> All web routes, HMAC signature verification, the access gate, evidence gathering, and every installation-lifecycle webhook handler (install, uninstall, repos added/removed, repo made private). The auto-approval rule lives here in <code>public_only_verdict()</code>.</td></tr>
+      <tr><td class="fname">graph.py</td><td class="n">332</td><td><strong>The agent.</strong> A LangGraph state machine: <code>classify → route → act</code>. Routing is a pure function of the lane, so the control flow is inspectable rather than emergent.</td></tr>
+      <tr><td class="fname">diagnose.py</td><td class="n">521</td><td><strong>The LLM call.</strong> Builds the prompt, demands structured JSON (diagnosis + lane + rationale), validates the response, and falls back to <code>informational</code> if the model returns something unusable. Model id lives at line 25.</td></tr>
+      <tr><td class="fname">log_excerpt.py</td><td class="n">67</td><td><strong>Token economy.</strong> A CI log can be megabytes; a context window is not. Finds <code>##[error]</code> markers and keeps 5 lines before, 10 after. Small file, large effect on cost and accuracy.</td></tr>
+      <tr><td class="fname">github_client.py</td><td class="n">387</td><td><strong>Every GitHub API call.</strong> Logs, diffs, comments, labels, re-runs. Every function takes an <code>installation_id</code> — there is no ambient credential to accidentally use.</td></tr>
+      <tr><td class="fname">mcp_server.py</td><td class="n">295</td><td><strong>The write surface.</strong> Four tools, plus DNS-rebinding protection via the Host allowlist.</td></tr>
+      <tr><td class="fname">mcp_client.py</td><td class="n">219</td><td>How <code>graph.py</code> reaches those tools over HTTP. Also where retry lives.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Memory — the part that makes it interesting</h3>
+  <table>
+    <thead><tr><th>File</th><th class="n">Lines</th><th>Significance</th></tr></thead>
+    <tbody>
+      <tr><td class="fname">embeddings.py</td><td class="n">150</td><td>Turns a log excerpt into <strong>384 numbers</strong> using <code>all-MiniLM-L6-v2</code>, running locally. No API call, no per-embedding cost, no third party sees the log twice.</td></tr>
+      <tr><td class="fname">memory.py</td><td class="n">150</td><td>"Has this failed before?" A pgvector cosine search. The <strong>0.90 threshold</strong> at line 71 was derived from measurement, not guessed — see section 7.</td></tr>
+      <tr><td class="fname">backfill_embeddings.py</td><td class="n">110</td><td>One-time: embedded the rows written before memory existed, so history was searchable rather than starting from zero.</td></tr>
+      <tr><td class="fname">migrate_jsonl.py</td><td class="n">139</td><td>One-time: imported the original flat-file <code>diagnoses.jsonl</code> into Postgres.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Identity, access, and the dashboard</h3>
+  <table>
+    <thead><tr><th>File</th><th class="n">Lines</th><th>Significance</th></tr></thead>
+    <tbody>
+      <tr><td class="fname">app_auth.py</td><td class="n">422</td><td><strong>The App's own identity.</strong> Signs a JWT with the private key, trades it for a 1-hour installation token, caches it. This replaced a personal access token entirely — see section 7.</td></tr>
+      <tr><td class="fname">user_auth.py</td><td class="n">418</td><td><strong>A person's identity.</strong> GitHub OAuth, and a signed session cookie. The GitHub user token is <strong>thrown away</strong> at the end of the callback and never stored.</td></tr>
+      <tr><td class="fname">db.py</td><td class="n">976</td><td><strong>Every line of SQL in the project.</strong> Two tables, the migration runner, and the access-gate queries. No ORM magic scattered elsewhere.</td></tr>
+      <tr><td class="fname">dashboard.py</td><td class="n">325</td><td>The read-only <code>/api</code> routes: <code>/me</code>, <code>/stats</code>, <code>/diagnoses</code>. No writes anywhere in the file.</td></tr>
+      <tr><td class="fname">admin.py</td><td class="n">221</td><td>The owner-only approve/revoke routes. Who counts as owner is read from GitHub's <code>GET /app</code> — not from a config file that could drift.</td></tr>
+      <tr><td class="fname">notify.py</td><td class="n">124</td><td>One line of text to a Discord or Slack webhook. Fire-and-forget; cannot raise, because it runs inside a webhook handler on GitHub's clock.</td></tr>
+      <tr><td class="fname">server_combined.py</td><td class="n">130</td><td>Mounts the app and the MCP server into one process, so Render's single free service can host both.</td></tr>
+      <tr><td class="fname">preflight.py</td><td class="n">366</td><td>Asks all six external dependencies whether they are alive, checks every installation's gate state, and confirms the protected routes still return 401. Run before demoing.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="page break">
+  <div class="h2rule"><p class="eyebrow">Section 04 continued</p><h2>The frontend and the eval suite</h2></div>
+
+  <h3>React dashboard — <span class="mono" style="font-size:9pt;color:var(--muted)">frontend/src/</span></h3>
+  <table>
+    <thead><tr><th>File</th><th class="n">Lines</th><th>Significance</th></tr></thead>
+    <tbody>
+      <tr><td class="fname">App.tsx</td><td class="n">312</td><td>Layout and the three empty states — signed out, no installations, waiting for approval. Each is a different problem with a different fix, so each gets different words.</td></tr>
+      <tr><td class="fname">api.ts</td><td class="n">275</td><td>Every fetch. <code>API_BASE</code> defaults to same-origin, which is what makes the session cookie work.</td></tr>
+      <tr><td class="fname">DiagnosisTable.tsx</td><td class="n">244</td><td>The main table, with lane filtering.</td></tr>
+      <tr><td class="fname">AdminPanel.tsx</td><td class="n">181</td><td>Approve/revoke, visible only to the owner. Shows <em>how</em> each install was approved — <code>auto · public</code> vs by hand.</td></tr>
+      <tr><td class="fname">StatCards.tsx</td><td class="n">147</td><td>Totals by lane.</td></tr>
+      <tr><td class="fname">RefreshAccess.tsx</td><td class="n">67</td><td>Re-runs OAuth to refresh a stale installation list. A button rather than automatic, because automatic would require storing the user token.</td></tr>
+      <tr><td class="fname">PendingApproval.tsx</td><td class="n">72</td><td>The "waiting for approval" state — a correct state, not an error, and worded that way.</td></tr>
+      <tr><td class="fname">SignIn / Skeleton / LaneBadge / MemoryCell / icons / format</td><td class="n">~430</td><td>Sign-in screen, loading skeletons, lane pills, the memory-match cell, inline SVG icons, date and text formatting.</td></tr>
+    </tbody>
+  </table>
+
+  <h3>The eval suite — <span class="mono" style="font-size:9pt;color:var(--muted)">eval/</span></h3>
+  <table>
+    <thead><tr><th>File</th><th class="n">Lines</th><th>Significance</th></tr></thead>
+    <tbody>
+      <tr><td class="fname">golden_set.json</td><td class="n">24 cases</td><td><strong>The measuring stick.</strong> Four groups: synthetic (8), historical (6), middle-zone (6), live-crosscheck (4). Each has a known-correct lane and a written rationale.</td></tr>
+      <tr><td class="fname">run_eval.py</td><td class="n">1029</td><td>Runs the golden set against <strong>the real classifier</strong> — not a copy. It calls <code>graph.classify</code> and <code>memory.search_past_failures</code>, but never routes to the action nodes, so it cannot post or re-run anything.</td></tr>
+      <tr><td class="fname">findings.md</td><td class="n">—</td><td>What the numbers <em>mean</em>. Written by hand; survives a re-run.</td></tr>
+      <tr><td class="fname">baseline_phase8.json</td><td class="n">—</td><td>A frozen run. Every later run is diffed against it, so "did I make it worse" is answerable.</td></tr>
+    </tbody>
+  </table>
+
+  <div class="box">
+    <span class="label">The current score</span>
+    <p><strong>22 / 24 = 91.7%</strong> overall. On the 21 unambiguous cases: <strong>20 / 21 = 95.2%</strong>. By lane: <code>needs_review</code> 9/9, <code>informational</code> 11/12, <code>safe_auto_fix</code> 2/3.</p>
+    <p>The three ambiguous cases are <em>designed</em> to be arguable — movement there is noise. Movement in the other 21 is signal. That distinction is why two numbers are reported instead of one.</p>
+  </div>
+
+  <h3>Configuration</h3>
+  <table>
+    <tbody>
+      <tr><td class="fname">Dockerfile</td><td>One image for both services. Model weights are <strong>baked in</strong> at build time, so a cold start does not download 90MB from HuggingFace.</td></tr>
+      <tr><td class="fname">docker-compose.yml</td><td>app + mcp + postgres + frontend, for local development.</td></tr>
+      <tr><td class="fname">render.yaml</td><td>Production as a blueprint. One web service, free plan, <code>autoDeployTrigger: commit</code>.</td></tr>
+      <tr><td class="fname">GUIDE.md</td><td>The install guide written for somebody who is <em>not</em> the owner.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ================= 5. EXTERNAL ================= -->
+<div class="page break">
+  <div class="h2rule"><p class="eyebrow">Section 05</p><h2>External services — what, why, and what was rejected</h2></div>
+  <p>Six things this project does not own. For each, an interviewer's real question is <em>"why that one?"</em></p>
+
+  <div class="card nobreak" style="margin-bottom:13px;">
+    <h4>GitHub — the platform <span class="pill a">required</span></h4>
+    <p>Source of webhooks, logs, diffs; destination for comments. Integrated as a <strong>GitHub App</strong>, not a personal access token.</p>
+    <p><strong>Why an App:</strong> a PAT carries one human's full access to everything they can see, never expires until revoked, and cannot be scoped per repository. An App gets an <strong>installation token scoped to one installation, expiring in an hour by itself</strong>. When Phase 10 leaked a secret, that difference is what limited the blast radius.</p>
+  </div>
+
+  <div class="card nobreak" style="margin-bottom:13px;">
+    <h4>Groq — LLM inference <span class="pill a">required</span></h4>
+    <p>Runs <code>openai/gpt-oss-20b</code>. Called through the <strong>OpenAI SDK</strong>, because Groq is API-compatible.</p>
+    <p><strong>Why Groq:</strong> speed and a free tier. Inference sits inside GitHub's 10-second webhook window (mitigated by backgrounding, but latency still matters). <strong>Why an open-weights 20B rather than a frontier model:</strong> the task is bounded — read an error, name the cause, pick one of three labels. The eval says 95.2% on clear cases. Paying frontier prices for that would be waste.</p>
+    <p><strong>The trade admitted:</strong> the SDK is OpenAI's, so switching providers is a base-URL change. That is deliberate portability, not lock-in.</p>
+  </div>
+
+  <div class="card nobreak" style="margin-bottom:13px;">
+    <h4>Neon — Postgres with pgvector <span class="pill a">required</span></h4>
+    <p>Stores every diagnosis and the installations table.</p>
+    <p><strong>Why not Render's own Postgres:</strong> Render's free database <strong>expires 30 days after creation</strong>. For most projects that is an annoyance. Here it is fatal — the whole point of the embedding search is recalling failures from weeks ago. <em>A database that deletes itself every month is not memory.</em> Neon's free tier does not expire.</p>
+    <p><strong>Why pgvector rather than a vector database:</strong> at this scale the vectors belong next to the rows they describe. A separate Pinecone or Weaviate would add a service, a sync problem, and a second failure mode to solve a problem that <code>ORDER BY embedding &lt;=&gt; query</code> already solves.</p>
+  </div>
+
+  <div class="card nobreak" style="margin-bottom:13px;">
+    <h4>Render — hosting <span class="pill a">required</span></h4>
+    <p>One free web service running app + MCP server, auto-deploying on push to <code>master</code>.</p>
+    <p><strong>The cost of free:</strong> the instance sleeps after ~15 minutes idle and takes 1–2 minutes to wake. <strong>Webhooks that arrive while it sleeps are lost outright</strong> — GitHub does not retry. That was measured, not assumed.</p>
+  </div>
+
+  <div class="card nobreak" style="margin-bottom:13px;">
+    <h4>cron-job.org — keep-warm <span class="pill w">mitigation</span></h4>
+    <p>Pings <code>/health</code> on a schedule so the instance never sleeps and no webhook is lost.</p>
+    <p><strong>Why not GitHub Actions' own scheduler:</strong> it was tried first and <strong>it does not work</strong>. Measured over 7 hours: a <code>*/10</code> cron should have fired ~42 times and fired <strong>0</strong>. GitHub deprioritises scheduled workflows under load with no error and no notification. An external pinger fires on time. This is in the README as a settled finding.</p>
+  </div>
+
+  <div class="card nobreak">
+    <h4>Discord / Slack webhook — owner notification <span class="pill">optional, currently off</span></h4>
+    <p>One line of text when a private-repo installation needs manual approval.</p>
+    <p><strong>Currently unset by choice.</strong> The message goes to the server log instead. The consequence is stated honestly in the install guide: an installer must message the owner, because nothing else will.</p>
+  </div>
+
+  <h3>Python dependencies, and what each is load-bearing for</h3>
+  <table>
+    <thead><tr><th>Package</th><th>Why it is there</th></tr></thead>
+    <tbody>
+      <tr><td class="fname">fastapi + uvicorn</td><td>Async web framework. Async matters: a webhook handler waiting on an LLM must not block others.</td></tr>
+      <tr><td class="fname">langgraph</td><td>The agent as an explicit state machine. Chosen over a prompt-chaining loop because routing becomes inspectable and testable.</td></tr>
+      <tr><td class="fname">mcp</td><td>The tool boundary. Makes the write surface enumerable.</td></tr>
+      <tr><td class="fname">sentence-transformers</td><td>Local embeddings — no API cost, no third party, no network in the hot path.</td></tr>
+      <tr><td class="fname">pgvector + psycopg + sqlalchemy</td><td>Vector column, Postgres driver, schema and queries.</td></tr>
+      <tr><td class="fname">pyjwt[crypto]</td><td>Signs the App JWT (RS256). Chosen over a GitHub SDK: the App auth flow is two API calls and a signature — an SDK would be a dependency to hide nine lines.</td></tr>
+      <tr><td class="fname">itsdangerous</td><td>Signs the session cookie.</td></tr>
+      <tr><td class="fname">openai</td><td>The client for Groq's compatible API.</td></tr>
+      <tr><td class="fname">httpx</td><td>Async HTTP throughout.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ================= 6. DATA MODEL ================= -->
+<div class="page break">
+  <div class="h2rule"><p class="eyebrow">Section 06</p><h2>The data model</h2></div>
+  <p>Two tables. Deliberately small.</p>
+
+  <h3><span class="fname" style="font-size:11pt">diagnoses</span> — what happened</h3>
+  <table>
+    <thead><tr><th>Column</th><th>Holds</th></tr></thead>
+    <tbody>
+      <tr><td class="fname">id</td><td>Primary key</td></tr>
+      <tr><td class="fname">run_id</td><td>GitHub's workflow run id — links back to the actual run</td></tr>
+      <tr><td class="fname">repo</td><td><code>owner/name</code></td></tr>
+      <tr><td class="fname">created_at</td><td>Timestamp</td></tr>
+      <tr><td class="fname">log_excerpt</td><td>The trimmed log — what the model actually saw</td></tr>
+      <tr><td class="fname">diff_summary</td><td>The change that triggered the run</td></tr>
+      <tr><td class="fname">diagnosis_text</td><td>The model's explanation</td></tr>
+      <tr><td class="fname">posted_to</td><td>Where the comment landed</td></tr>
+      <tr><td class="fname">lane</td><td>The classification</td></tr>
+      <tr><td class="fname">embedding</td><td><code>vector(384)</code> — this is what memory searches</td></tr>
+      <tr><td class="fname">raw</td><td>The full model response, kept for debugging</td></tr>
+      <tr><td class="fname">installation_id</td><td>Which installation produced it — the multi-tenant key</td></tr>
+    </tbody>
+  </table>
+
+  <h3><span class="fname" style="font-size:11pt">installations</span> — who is allowed</h3>
+  <table>
+    <thead><tr><th>Column</th><th>Holds</th></tr></thead>
+    <tbody>
+      <tr><td class="fname">installation_id</td><td>GitHub's id for the installation</td></tr>
+      <tr><td class="fname">account_login</td><td>User or org name</td></tr>
+      <tr><td class="fname">account_type</td><td><code>User</code> or <code>Organization</code></td></tr>
+      <tr><td class="fname">is_allowed</td><td><strong>The gate.</strong> Read on every single webhook</td></tr>
+      <tr><td class="fname">approval_source</td><td><code>auto_public</code> · <code>owner</code> · <code>NULL</code></td></tr>
+    </tbody>
+  </table>
+
+  <div class="box violet">
+    <span class="label">Why approval_source had to exist</span>
+    <p>Public-only installations approve themselves. But an install that was all-public can later <em>add a private repo</em> — and then automatic approval is a promise that is no longer true, so it must be withdrawn.</p>
+    <p>The problem: <code>is_allowed = true</code> looks identical whether the App set it or a human did. Withdrawing blindly would let the App overrule a decision the owner made on purpose. So the <em>reason</em> is recorded. Only <code>auto_public</code> is ever auto-withdrawn; <code>owner</code> and <code>NULL</code> never are.</p>
+    <p><strong>Rows predating the column are <code>NULL</code>, not backfilled to <code>owner</code></strong> — because backfilling would write a guess into a column that governs access.</p>
+  </div>
+
+  <div class="box amber">
+    <span class="label">Withdrawal is one-way — and that is the interesting bit</span>
+    <p>Making a repo private withdraws approval. Making it public again does <strong>not</strong> restore it.</p>
+    <p><em>Why:</em> if it did, approval would be reversible by anyone who can toggle a repository's visibility. The gate would be controlled by the applicant rather than the approver. Proven live: <code>privatized</code> closed the gate; <code>publicized</code> arrived three minutes later and did nothing.</p>
+  </div>
+
+  <h3>Schema changes without Alembic</h3>
+  <p>Migrations are a list of <code>(description, SQL)</code> pairs in <code>db.py</code>, run at startup, all written <code>IF NOT EXISTS</code> so re-running is safe. <strong>Why not Alembic:</strong> at two tables and a handful of additive changes, Alembic is a dependency, a directory, and a mental model to solve a problem this project does not have yet. The trigger to adopt it is the first destructive migration — a column rename or drop — not the calendar.</p>
+</div>
+
+<!-- ================= 7. DECISIONS ================= -->
+<div class="page break">
+  <div class="h2rule"><p class="eyebrow">Section 07</p><h2>The decisions worth defending</h2></div>
+  <p>This is the section that matters. Each is a decision, a reason, and a rejected alternative.</p>
+
+  <h3>1 · The 0.90 similarity threshold was derived, not guessed</h3>
+  <p>Memory only helps if "similar" means similar. The threshold was set by measuring real embedding distances between known-related and known-unrelated failure pairs, then picking the value that separated them. Below it, unrelated failures started matching and the hint made diagnoses <em>worse</em>.</p>
+  <p><strong>The honest bit:</strong> the eval later found a defect in the untested middle zone around the boundary — and that finding, plus the fix, is written up in the README. A number you can defend with a measurement beats a number that happens to work.</p>
+
+  <h3>2 · Failing closed, everywhere</h3>
+  <ul>
+    <li>A repository object with no <code>private</code> key reads as <strong>private</strong> (<code>.get("private", True)</code>) — so a payload shape change makes installs wait for a human, not sail through.</li>
+    <li>An empty repository list is <strong>no evidence</strong>, and no evidence cannot support a yes.</li>
+    <li>An <code>"All repositories"</code> install is refused <strong>even when everything is public today</strong>, because it silently covers repos created tomorrow.</li>
+    <li>A model response that will not parse falls back to <code>informational</code> — the lane that only ever posts a comment.</li>
+  </ul>
+
+  <h3>3 · The field is <code>private</code>, not <code>visibility</code> — and I checked</h3>
+  <p>GitHub's webhook reference documents that an installation payload contains a <code>repositories</code> array, but <strong>not what is inside each object</strong>. Assuming <code>visibility</code> — the field the REST API returns — would have shipped a bug that silently made every install look private.</p>
+  <p>Instead: <code>GET /app/hook/deliveries</code>, read a real delivery, and confirm the objects carry exactly five keys — <code>id, node_id, name, full_name, private</code>. <strong>Ask the system that owns the fact.</strong> That habit is the single most transferable thing in this project.</p>
+
+  <h3>4 · Permission changes are asymmetric</h3>
+  <p>Before narrowing <code>contents</code> from write to read, the docs were checked rather than assumed. GitHub: <em>adding</em> permissions requires every installation to re-accept by hand; <em>removing</em> them takes effect immediately. Verified afterwards in practice — both installations moved to <code>contents: read</code> with the same <code>updated_at</code>, no suspension, no action required from anybody.</p>
+
+  <h3>5 · The user's GitHub token is thrown away</h3>
+  <p>At the end of OAuth, the access token and its 6-month refresh token are <strong>discarded</strong>. Only the GitHub user id and login go into a signed session cookie.</p>
+  <p><strong>The cost, stated:</strong> the installation list is a snapshot from login, so a newly installed App is invisible until re-login — hence the "Refresh access" button. <strong>The alternative rejected:</strong> storing a live GitHub credential in a signed-but-not-encrypted cookie, or in the same Postgres the dashboard reads. A button press twice a day beats a stored credential.</p>
+
+  <h3>6 · A secret leaked, and the response is documented</h3>
+  <p>Phase 10 found a leaked secret. It was rotated, the exposure verified closed, and the whole incident written into the README rather than quietly fixed. <strong>An interviewer will respect this far more than a project claiming it never happened.</strong> The reason the blast radius was small is decision 1 in section 5 — scoped, self-expiring installation tokens rather than a personal access token.</p>
+
+  <h3>7 · Knowing what you have <em>not</em> built</h3>
+  <p>The README carries a "Deliberately not done" section: no pagination, no second approver, no refresh-token policy, no scheduled visibility re-check. Each says what would trigger building it — <em>"the trigger is the row count, not the calendar."</em></p>
+  <p>Being able to name your own gaps, with the condition that would change your mind, reads as engineering judgement rather than an unfinished project.</p>
+</div>
+
+<!-- ================= 8. INTERVIEW Q ================= -->
+<div class="page break">
+  <div class="h2rule"><p class="eyebrow">Section 08</p><h2>Interview questions, with answers</h2></div>
+  <p>Thirty questions. The <span style="color:var(--amber)">amber line</span> says what the question is really testing.</p>
+
+  <h3>Opening — they are checking you can explain your own work</h3>
+
+  <div class="q"><div class="qq"><span class="qnum">01</span><span>Tell me about this project.</span></div>
+    <p>Use the pitch in section 1 verbatim. Thirty seconds, then stop and let them steer.</p>
+    <div class="tell"><b>Testing</b> Whether you can compress. Rambling here costs you the interview.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">02</span><span>Walk me through what happens when a build fails.</span></div>
+    <p>The ten steps in section 2. Emphasise the order: <strong>signature → gate → respond 200 → background work</strong>. The reason 200 comes before the work is GitHub's 10-second timeout.</p>
+    <div class="tell"><b>Testing</b> Do you understand your own control flow, or did you assemble it by trial and error?</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">03</span><span>Why an agent? Could this be a script?</span></div>
+    <p>Honest answer: <strong>most of it could.</strong> The agent earns its place at one point — the decision of <em>which action to take</em>. Classification and routing are a state machine because the lane determines the action, and that needs to be inspectable and testable rather than buried in prompt text. If it only ever posted comments, a script would do.</p>
+    <div class="tell"><b>Testing</b> Whether you use "agent" as a buzzword. Conceding the limit is the strong answer.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">04</span><span>What was the hardest part?</span></div>
+    <p>The "repository added to an existing installation later" case. Auto-approval is a promise that every covered repo is public — but repos can be added after. Revoking blindly would overrule a human's deliberate approval; not revoking leaks auto-approval into private repos. Resolved by recording <em>why</em> the row was approved (<code>approval_source</code>) and only ever auto-withdrawing the App's own decisions.</p>
+    <div class="tell"><b>Testing</b> Whether you have hit a genuinely hard design problem, or only implementation friction.</div></div>
+
+  <h3>Architecture</h3>
+
+  <div class="q"><div class="qq"><span class="qnum">05</span><span>Why MCP? Why not just call the GitHub API?</span></div>
+    <p>To make the write surface <strong>enumerable</strong>. Every action that touches GitHub goes through one described tool call, so the complete list of what this agent can do is four signatures. Without that boundary, "what can it do to my repo" is answered by reading the whole codebase.</p>
+    <div class="tell"><b>Testing</b> Whether you chose a technology or followed a trend.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">06</span><span>Why LangGraph over LangChain or a plain loop?</span></div>
+    <p>Explicit state and explicit routing. The lane decides the next node through a pure function, so control flow is a graph you can read. A prompt-chaining loop hides routing inside the model's output, which is exactly the part you most need to test.</p>
+    <div class="tell"><b>Testing</b> Framework literacy, and whether you can articulate a trade rather than a preference.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">07</span><span>Your MCP server runs in the same process. Isn't the separation fake?</span></div>
+    <p><strong>Good question — the process boundary is fake, the code boundary is not.</strong> Under Docker they are separate containers. On Render's single free service they were merged by <code>server_combined.py</code>. The enforcement that matters — the agent reaching GitHub only through described tools — is unchanged either way. Paying for a second service to make a diagram honest would be the wrong trade.</p>
+    <div class="tell"><b>Testing</b> Whether you defend a design under pressure or fold. Concede the real point, hold the substantive one.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">08</span><span>How do you stop it re-running a job forever?</span></div>
+    <p>GitHub's own <code>run_attempt</code>. Only attempt 1 is ever re-run. Because the counter is GitHub's rather than in-process state, a restart or a redeploy cannot reset it.</p>
+    <div class="tell"><b>Testing</b> Do you understand why stateless guards beat stateful ones?</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">09</span><span>What happens if the LLM returns garbage?</span></div>
+    <p>Structured output is requested and validated. An unparseable or invalid response falls back to <code>FALLBACK_CATEGORY = informational</code> — the lane whose only action is posting a comment. The failure mode is a less useful comment, never an unintended write.</p>
+    <div class="tell"><b>Testing</b> Whether you designed for the model being wrong.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">10</span><span>How would this scale to a thousand repositories?</span></div>
+    <p>Three things break first, in order: <strong>(1)</strong> the free Render instance — webhook processing is in-process background tasks, so this needs a real queue (Celery, or Postgres-backed jobs); <strong>(2)</strong> <code>/api/diagnoses</code> uses a <code>LIMIT</code>, not pagination, and silently truncates; <strong>(3)</strong> the pgvector search is unindexed — it needs an HNSW index, which is one statement.</p>
+    <div class="tell"><b>Testing</b> Can you find your own bottlenecks? Naming three in order is much better than "add caching".</div></div>
+
+  <h3>Security and access — usually the deepest questions</h3>
+
+  <div class="q"><div class="qq"><span class="qnum">11</span><span>How do you authenticate to GitHub?</span></div>
+    <p>As a GitHub App. Sign a JWT with the App's private key (RS256), trade it for an <strong>installation access token</strong> scoped to one installation and expiring in one hour. Cached in memory for its lifetime. No personal access token anywhere in the system.</p>
+    <div class="tell"><b>Testing</b> Do you actually understand the auth flow you implemented?</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">12</span><span>Why not a personal access token? It's simpler.</span></div>
+    <p>A PAT carries one human's full access to everything they can see, never expires until revoked, and cannot be scoped per repository. An installation token is scoped and self-expiring. When a secret leaked in Phase 10, that difference is what bounded the damage.</p>
+    <div class="tell"><b>Testing</b> Security reasoning about blast radius, not just "tokens are bad".</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">13</span><span>How do you verify a webhook is really from GitHub?</span></div>
+    <p>HMAC-SHA256 over the <strong>raw request body</strong> using the shared secret, compared with <code>hmac.compare_digest</code> — constant-time, so it does not leak the signature through timing. It runs before parsing, because parsing attacker-controlled JSON before authenticating it is the bug.</p>
+    <div class="tell"><b>Testing</b> Whether you know <em>why</em> constant-time comparison and ordering matter.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">14</span><span>Who can approve an installation?</span></div>
+    <p>Only the account that registered the App, read from GitHub's <code>GET /app</code> at request time — not from a config file or an env var that could drift out of sync with reality.</p>
+    <div class="tell"><b>Testing</b> Authoritative-source thinking again.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">15</span><span>You auto-approve public repos. Isn't that a security hole?</span></div>
+    <p>No, and the reason is the whole argument: <strong>a public repository's build logs are already readable by anyone.</strong> BuildDoctor reading one discloses nothing that was not already open, so requiring approval would be permitting something already permitted. Private logs are a genuine decision, so a human still makes it. The rule is narrow — it needs an explicitly selected repo list <em>and</em> every repo public.</p>
+    <div class="tell"><b>Testing</b> Can you reason about what a control actually protects, rather than adding controls reflexively?</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">16</span><span>Why refuse "All repositories" if everything is public today?</span></div>
+    <p>Because approval is <strong>a promise about tomorrow</strong>. An "all" install covers every repo the account creates from then on. GitHub's own community thread contradicts itself on whether <code>installation_repositories</code> fires for repos created later under an "all" install — so the promise cannot be kept, and it is refused rather than guessed at.</p>
+    <div class="tell"><b>Testing</b> Whether you act on ambiguous evidence by failing closed.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">17</span><span>Someone makes their repo private after being auto-approved. Then?</span></div>
+    <p>The <code>repository</code> / <code>privatized</code> webhook fires and approval is withdrawn — but only if <code>approval_source == auto_public</code>. An owner-approved install is never auto-withdrawn, because that would be the App overruling a deliberate human decision.</p>
+    <div class="tell"><b>Testing</b> Did you think past the happy path?</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">18</span><span>They make it public again. Does approval come back?</span></div>
+    <p><strong>No — deliberately.</strong> If it did, approval would be reversible by anyone who can toggle a repository's visibility, which puts the gate in the applicant's hands rather than the approver's.</p>
+    <div class="tell"><b>Testing</b> Whether you can spot a privilege-escalation path in your own design.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">19</span><span>Where do you store the user's GitHub token?</span></div>
+    <p>Nowhere. It is discarded at the end of the OAuth callback along with the refresh token. The session cookie holds the GitHub user id and login, signed with <code>itsdangerous</code>.</p>
+    <div class="tell"><b>Testing</b> Session design, and whether you know what you are trading away.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">20</span><span>Your admin endpoint has no CSRF token. Why is that acceptable?</span></div>
+    <p>Fair challenge. The mitigation is that the route requires a valid session <em>and</em> that the caller is the App owner, and it was verified that an unauthenticated POST with a well-formed body returns <strong>401 with the row unchanged</strong>. It is not a substitute for CSRF protection on a larger surface — with one write route and one authorised human, it is a stated, bounded gap rather than an oversight.</p>
+    <div class="tell"><b>Testing</b> How you handle a real weakness. Defending it as flawless is the wrong answer; naming the bound is the right one.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">21</span><span>Your MCP server is on a public URL. Exposed?</span></div>
+    <p>Reachable, not usable. <code>mcp_server.py</code> checks the <code>Host</code> header against an allowlist and returns <strong>421</strong> on a mismatch. Traffic through Render's router carries the public hostname, which is not listed; the app's own loopback call carries <code>localhost:10000</code>, which is. Tested in both directions.</p>
+    <div class="tell"><b>Testing</b> DNS-rebinding awareness — a genuinely advanced answer.</div></div>
+
+  <h3>Data, memory, and evaluation</h3>
+
+  <div class="q"><div class="qq"><span class="qnum">22</span><span>Explain the memory feature.</span></div>
+    <p>Each log excerpt is embedded to 384 dimensions with <code>all-MiniLM-L6-v2</code>, stored in a pgvector column. On a new failure, a cosine search finds the nearest past diagnosis; above <strong>0.90</strong> similarity it is passed to the model as a hint. It is retrieval-augmented generation over the project's own history.</p>
+    <div class="tell"><b>Testing</b> Whether you can explain embeddings without hand-waving.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">23</span><span>Where did 0.90 come from?</span></div>
+    <p>Measurement. Distances were compared between known-related and known-unrelated failure pairs, and the threshold set where they separated. Below it, unrelated failures matched and the hint made diagnoses worse. The eval later found a defect in the untested zone near the boundary, which was fixed — that is written up rather than hidden.</p>
+    <div class="tell"><b>Testing</b> <strong>The single best question to be ready for.</strong> "It felt right" fails. A measurement passes.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">24</span><span>Why a local embedding model instead of an API?</span></div>
+    <p>Cost, latency, and disclosure. It is free per call, has no network hop in the hot path, and the log is not sent to a second third party. The weights are baked into the Docker image so a cold start does not pull 90MB from HuggingFace.</p>
+    <div class="tell"><b>Testing</b> Practical cost and latency reasoning.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">25</span><span>How do you know the classifier is any good?</span></div>
+    <p>A 24-case golden set with known-correct lanes, in four groups including a deliberately ambiguous "middle zone". Current: <strong>91.7% overall, 95.2% on unambiguous cases.</strong> It calls the real classifier — not a copy — but never routes to the action nodes, so running it posts nothing.</p>
+    <div class="tell"><b>Testing</b> Whether you evaluate at all. Most candidate projects do not, and this answer stands out sharply.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">26</span><span>Why report two accuracy numbers?</span></div>
+    <p>Because three of the 24 cases are <em>designed</em> to be arguable. Movement on those is noise; movement on the other 21 is signal. Reporting one blended number would hide the distinction that makes the metric useful.</p>
+    <div class="tell"><b>Testing</b> Metric literacy. A strong differentiator.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">27</span><span>Why Postgres + pgvector rather than a vector database?</span></div>
+    <p>The vectors describe rows that already live in Postgres. A dedicated vector store would add a service, a sync problem, and a second failure mode to solve something one <code>ORDER BY</code> already solves. The trigger to revisit is scale — and the first fix would be an HNSW index, not a new service.</p>
+    <div class="tell"><b>Testing</b> Resisting resume-driven architecture.</div></div>
+
+  <h3>Operations</h3>
+
+  <div class="q"><div class="qq"><span class="qnum">28</span><span>What happens if your server is asleep when a webhook arrives?</span></div>
+    <p><strong>It is lost. GitHub does not retry.</strong> That was measured, not assumed. The fix is an external pinger keeping the instance warm. GitHub Actions' own scheduler was tried first and does not work — over 7 hours a <code>*/10</code> cron should have fired ~42 times and fired <strong>0</strong>, silently.</p>
+    <div class="tell"><b>Testing</b> Do you know your system's real failure modes? Admitting lost webhooks is far stronger than claiming reliability you cannot prove.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">29</span><span>How do you know it is working right now?</span></div>
+    <p><code>python preflight.py</code> — ten checks in about thirty seconds. It asks Render, Neon, Groq and GitHub directly, verifies every installation's gate state, confirms the deployed bundle, checks recent webhook delivery outcomes, and asserts the protected routes still return 401. It exists because free-tier dependencies fail silently and uptime proves nothing about the others.</p>
+    <div class="tell"><b>Testing</b> Operational maturity. Very few candidate projects have this.</div></div>
+
+  <div class="q"><div class="qq"><span class="qnum">30</span><span>What would you do next?</span></div>
+    <p>In order: <strong>(1)</strong> a real job queue so webhook processing survives a restart; <strong>(2)</strong> pagination before the row count makes <code>LIMIT</code> dishonest; <strong>(3)</strong> a scheduled visibility re-check, because withdrawal currently depends on webhooks arriving and a sleeping server loses them; <strong>(4)</strong> an HNSW index when the search gets slow.</p>
+    <p>Each has a stated trigger. None is "rewrite it in Rust".</p>
+    <div class="tell"><b>Testing</b> Prioritisation. Triggers rather than a wish list is the difference.</div></div>
+</div>
+
+<!-- ================= 9. PROOF ================= -->
+<div class="page break">
+  <div class="h2rule"><p class="eyebrow">Section 09</p><h2>Proof it works</h2></div>
+  <p>Captured 2026-08-28. Not a description of what should happen — a record of what did.</p>
+
+  <h3>The end-to-end run</h3>
+  <pre><code>16:01:09  commit 78e7707 pushed to builddoctor-testing/ci-test
+16:01:2x  workflow run 33187951570 -> failure
+16:01:38  comment posted by builddoctor-ci[bot]
+16:01:39  diagnoses row id=12 written, embedding stored
+
+elapsed: ~18 seconds, build failure to comment</code></pre>
+
+  <p><strong>What the bot actually wrote:</strong></p>
+  <pre><code>## BuildDoctor: `CI` failed
+
+The job failed because a step in the workflow ran the command
+`exit 1`, which immediately caused the job to terminate with exit
+code 1. The added `trigger.txt` file is unrelated and does not
+explain the failure.
+
+Failed job(s): build
+Lane: informational - STEP 2 (build or dependency machinery):
+The failure originates from a workflow step (`Run exit 1`)
+defined in the CI configuration, not from application code.</code></pre>
+
+  <div class="box">
+    <span class="label">Why this output is worth showing an interviewer</span>
+    <p>It did not just read the error — it <strong>ruled out the diff</strong>. The commit added <code>trigger.txt</code>, and the model explicitly said that file is unrelated. That is the diff-gathering step in section 2 doing real work; a log-only tool could not have said it.</p>
+  </div>
+
+  <h3>Preflight, same session</h3>
+  <pre><code>[  ok  ] environment: all 8 keys present
+[  ok  ] render: not suspended; deploy live
+[  ok  ] server: awake, /health in 0.58s
+[  ok  ] dashboard: serving bundle index-OtVG-ofB.js
+[  ok  ] database: 3 installs, all open
+[  ok  ] groq: key valid, openai/gpt-oss-20b available
+[  ok  ] github app: builddoctor-ci, 3 installs, perms and events correct
+[  ok  ] webhooks: last 20 delivered ok
+[  ok  ] auth gate: all 3 routes return 401
+[  ok  ] git: clean and pushed
+--------------------------------------------------------------
+10 pass, 0 warn, 0 fail</code></pre>
+
+  <h3>Real multi-tenant traffic</h3>
+  <table>
+    <thead><tr><th>Row</th><th>Repo</th><th>Installation</th><th>Lane</th></tr></thead>
+    <tbody>
+      <tr><td class="n">12</td><td class="fname">builddoctor-testing/ci-test</td><td class="n">157254438</td><td><span class="pill a">informational</span></td></tr>
+      <tr><td class="n">11</td><td class="fname">Dhatubablu/samplerepofirst</td><td class="n">157269524</td><td><span class="pill a">informational</span></td></tr>
+      <tr><td class="n">10</td><td class="fname">Dhatubablu/samplerepofirst</td><td class="n">157269524</td><td><span class="pill a">informational</span></td></tr>
+      <tr><td class="n">9</td><td class="fname">builddoctor-testing/ci-test</td><td class="n">157254438</td><td><span class="pill a">informational</span></td></tr>
+    </tbody>
+  </table>
+  <p>Rows 10 and 11 come from an installation that is <strong>not the author's</strong>. Multi-tenancy is demonstrated by traffic, not asserted by design.</p>
+
+  <div class="box violet">
+    <span class="label">If you show one thing in an interview, show this</span>
+    <p>Open the commit, show the bot's comment, then open the dashboard and show the same event as a row. Two artefacts, one event, thirty seconds. That sequence proves the whole pipeline without a single slide.</p>
+  </div>
+
+  <div class="foot">
+    BuildDoctor — complete technical reference. Generated 2026-08-28.<br>
+    Every figure in this document was read from the running system or the source, not recalled.
+  </div>
+</div>
+
+</body>
+</html>
