@@ -1445,9 +1445,24 @@ after the statement is made. Three ways, all handled:
 
 The last row needs the App to be **subscribed to the `repository` event**,
 which is a checkbox in the App's settings and not something code can arrange.
-The handler exists either way; an unsubscribed App simply never calls it. The
-first two rows work with no subscription at all, because `installation` and
-`installation_repositories` are delivered to every App unconditionally.
+**This deployment is subscribed** - `GET /app` reports
+`events: ['repository', 'workflow_run']` - so all three rows are live here;
+a fork that does not tick the box still gets the first two, because
+`installation` and `installation_repositories` are delivered to every App
+unconditionally and the handler for the third is simply never called.
+
+All three were exercised against the real deployment rather than only in a
+test. The `privatized` path in particular:
+
+```
+13:10:23  webhook: event=repository action=privatized repo=builddoctor-testing/ci-test
+13:10:23  AUTO-APPROVAL WITHDRAWN: installation 157254438 - ci-test was made private
+13:11:34  SKIPPED builddoctor-testing/ci-test: installation 157254438 has is_allowed = false
+13:13:06  webhook: event=repository action=publicized repo=builddoctor-testing/ci-test
+```
+
+The last line is the one-way rule working: the event arrived, and nothing
+followed it.
 
 Withdrawal is **one-way**. Removing the last private repository does not earn
 the approval back, and `publicized` does not either. Otherwise approval would
@@ -2190,12 +2205,14 @@ Phase 14 points at the operator's own channel, which is the wrong end - the
 installer has no channel this project knows about.
 
 **Re-checking repository visibility on a schedule.** Withdrawal is driven
-entirely by webhooks, so it is only as complete as the events the App is
-subscribed to. Nothing sweeps the installations table asking GitHub what each
-repository looks like now. A poll would close the gap left by an unsubscribed
-`repository` event, at the cost of a periodic job on a service whose whole
+entirely by webhooks, so it is only as complete as the deliveries that
+actually arrive. Nothing sweeps the installations table asking GitHub what
+each repository looks like now, so a delivery lost while the service was
+asleep leaves an approval standing that should have been withdrawn. A poll
+would close that, at the cost of a periodic job on a service whose whole
 Phase 10 was about not having background work. Not worth it at two
-installations.
+installations; the trigger to build it is the first missed delivery, not the
+calendar.
 
 **Refreshing the installation list without a round trip.** The "Refresh
 access" button re-runs the OAuth flow, which is fast because github.com

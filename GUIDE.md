@@ -285,10 +285,10 @@ already accepted by running a public service.
   reloading the dashboard.
 - **No second approver.** Only the account that registered the App can
   approve, with no delegation.
-- **The `repository` event is opt-in.** Withdrawing approval when a
-  repository is *made* private only works if the App is subscribed to the
-  `repository` webhook event in its settings. Adding a private repository to
-  an installation is caught either way.
+- **No sweep of existing installations.** Withdrawal happens when a webhook
+  arrives. Nothing periodically re-checks what every repository looks like
+  now, so a delivery lost while the server was asleep would leave an
+  approval standing that should have been withdrawn.
 
 ### Making the App private again
 
