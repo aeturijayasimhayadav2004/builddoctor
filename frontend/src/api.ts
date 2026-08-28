@@ -87,21 +87,69 @@ export interface DiagnosesResponse {
   diagnoses: Diagnosis[];
 }
 
+/** One installation of the App, as the viewer's own /api/me reports it. */
+export interface MyInstallation {
+  installation_id: number;
+  account_login: string;
+  /** "User" or "Organization". Null on rows recorded before Phase 11. */
+  account_type: string | null;
+  /**
+   * Whether BuildDoctor will act on this installation's builds. Note what
+   * this does NOT control: diagnoses already written stay visible to the
+   * people who could always see them. Revoking stops future work; it does
+   * not confiscate past work.
+   */
+  is_allowed: boolean;
+}
+
 /** Who the browser is signed in as. `GET /api/me` allows everybody. */
 export interface Me {
   signed_in: boolean;
   login?: string;
   avatar_url?: string | null;
-  /** Account logins of the installations GitHub says this user administers. */
-  accounts?: string[];
-  /** What the session cookie claims, recorded at sign-in. */
-  installations?: number;
-  /** How many of those still exist in the database right now. */
-  installations_visible?: number;
+  /**
+   * The installations GitHub says this user administers, intersected with
+   * the ones this database still knows about - so an entry here is both
+   * theirs and real. Empty means they have not installed the App.
+   */
+  installations?: MyInstallation[];
+  /**
+   * How many the session cookie claimed at sign-in. Larger than
+   * installations.length means one went away mid-session, or its `created`
+   * webhook never landed.
+   */
+  installations_at_login?: number;
   /** True only for the account that registered the App itself. */
   is_app_owner?: boolean;
   /** Whether the pre-Phase-11 rows with a null installation_id are included. */
   includes_legacy_rows?: boolean;
+  /**
+   * They have installed the App and none of their installations have been
+   * approved yet. A presentation fact, not a permission: it decides whether
+   * to say "waiting for approval" instead of showing an empty table.
+   */
+  pending_approval?: boolean;
+}
+
+/** One installation as the admin view sees it: everybody's, not just yours. */
+export interface AdminInstallation extends MyInstallation {
+  created_at: string | null;
+  /** Diagnoses written for this installation so far. */
+  diagnoses: number;
+}
+
+export interface AdminInstallations {
+  count: number;
+  pending: number;
+  installations: AdminInstallation[];
+}
+
+/** Thrown when the API says 403: signed in, but not the App owner. */
+export class ForbiddenError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ForbiddenError";
+  }
 }
 
 /**
@@ -140,6 +188,9 @@ async function getJson<T>(path: string): Promise<T> {
   if (response.status === 401) {
     throw new NotSignedInError();
   }
+  if (response.status === 403) {
+    throw new ForbiddenError("Only the App owner can do that.");
+  }
   if (!response.ok) {
     throw new Error(`${path} returned ${response.status} ${response.statusText}`);
   }
@@ -167,4 +218,45 @@ export async function logout(): Promise<void> {
     method: "POST",
     credentials: "include",
   });
+}
+
+/* -------------------------------------------------------------------------
+ * The admin half. Only the App owner gets anything but a 403 from these.
+ * ---------------------------------------------------------------------- */
+
+export function fetchAdminInstallations(): Promise<AdminInstallations> {
+  return getJson<AdminInstallations>("/api/admin/installations");
+}
+
+/**
+ * Approve or revoke one installation.
+ *
+ * There is no CSRF token, and that is deliberate rather than forgotten: the
+ * session cookie is SameSite=Lax, so a browser will not attach it to a POST
+ * started by another site. Such a request arrives with no session and is
+ * rejected as unauthenticated before it reaches the handler.
+ */
+export async function setInstallationAllowed(
+  installationId: number,
+  allowed: boolean,
+): Promise<void> {
+  const response = await fetch(
+    `${API_BASE}/api/admin/installations/${installationId}/allowed`,
+    {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ allowed }),
+    },
+  );
+
+  if (response.status === 401) throw new NotSignedInError();
+  if (response.status === 403) {
+    throw new ForbiddenError("Only the App owner can approve installations.");
+  }
+  if (!response.ok) {
+    throw new Error(
+      `Approving ${installationId} returned ${response.status} ${response.statusText}`,
+    );
+  }
 }

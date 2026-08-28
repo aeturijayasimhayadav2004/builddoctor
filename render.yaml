@@ -170,18 +170,20 @@ services:
       - key: PUBLIC_BASE_URL
         value: https://builddoctor.onrender.com
 
-      # WHO MAY USE BUILDDOCTOR, at install time.
+      # WHO MAY USE BUILDDOCTOR is no longer configured here at all.
       #
-      # This seeds is_allowed when an installation is first recorded, and is
-      # never consulted again - the installations.is_allowed COLUMN is what
-      # the gate reads on every webhook. That split is deliberate: changing
-      # this value needs a redeploy, and on a free instance a redeploy is a
-      # cold start, so revoking access here would take the service down for
-      # a minute. Flipping the column takes effect on the next delivery.
+      # Phase 11 set ALLOWED_ACCOUNTS to one login, which seeded
+      # installations.is_allowed when a row was first created. Phase 13
+      # deleted the variable: approval is now a person pressing a button,
+      # which writes the same column the gate has always read.
       #
-      # Empty would mean nobody. There is no wildcard, on purpose.
-      - key: ALLOWED_ACCOUNTS
-        value: aeturijayasimhayadav2004
+      # The variable may still be set on the Render service from the earlier
+      # phase. It is inert - nothing reads it - and removing it from the
+      # dashboard is tidying, not a fix.
+      #
+      # Nothing replaced it. Who may APPROVE comes from GET /app, so it needs
+      # no configuration; which installations ARE approved lives in Postgres,
+      # so changing it needs no redeploy. See admin.py.
 
       # ------------------------------------------------------------------
       # Topology. Not secret, so these live in the file.

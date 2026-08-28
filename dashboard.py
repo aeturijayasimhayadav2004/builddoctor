@@ -251,18 +251,42 @@ def me(request: Request) -> dict:
         return {"signed_in": False}
 
     installation_ids, include_legacy = _scope(viewer)
+
+    # The approval state of each one, so the frontend can tell an installer
+    # who is waiting on a human apart from one whose dashboard is simply
+    # empty. Before Phase 13 both looked identical from the browser - an
+    # empty table - which is the "silent skipping" this route now fixes.
+    rows = db.installations_for(installation_ids)
+    installations = [
+        {
+            "installation_id": row.installation_id,
+            "account_login": row.account_login,
+            "account_type": row.account_type,
+            "is_allowed": row.is_allowed,
+        }
+        for row in rows
+    ]
+
     return {
         "signed_in": True,
         "login": viewer.login,
         "avatar_url": viewer.avatar_url,
-        "accounts": viewer.accounts,
-        # What GitHub said at login, and what is still true now. When these
-        # differ, an installation went away mid-session - worth being able to
-        # see rather than silently reconciling.
-        "installations": len(viewer.installation_ids),
-        "installations_visible": len(installation_ids),
+        "installations": installations,
+        # What GitHub said at login, against what is still true now. When
+        # these differ, an installation went away mid-session, or its
+        # `created` webhook never landed - worth being able to see rather
+        # than silently reconciling.
+        "installations_at_login": len(viewer.installation_ids),
         "is_app_owner": viewer.is_app_owner,
         "includes_legacy_rows": include_legacy,
+        # Waiting on somebody, as opposed to having nothing yet. False for a
+        # viewer with no installations at all: they are not pending, they
+        # have not installed anything, and telling them to wait would be
+        # wrong. Note this is a PRESENTATION fact, not an access control -
+        # is_allowed gates whether builds get diagnosed, and deliberately
+        # does not hide diagnoses that already exist.
+        "pending_approval": bool(installations)
+        and not any(item["is_allowed"] for item in installations),
     }
 
 

@@ -177,8 +177,8 @@ class Installation(Base):
     WHY is_allowed IS A COLUMN AND NOT AN ENV VAR
 
     The obvious cheap version of a gate is a comma-separated env var read at
-    request time - and ALLOWED_ACCOUNTS below is exactly that, so the cheap
-    version does exist here. It is just not the thing the gate reads.
+    request time. Phase 11 shipped exactly that alongside this column, as the
+    thing that seeded it; Phase 13 deleted the variable and kept the column.
 
     The difference is what each one can answer. An env var can answer "should
     this account be let in by default", once, at install time. It cannot
@@ -189,9 +189,9 @@ class Installation(Base):
         would take the whole service down for a minute - the exact failure
         Phase 10 spent its time removing.
       * It cannot be changed from anywhere but a deploy pipeline, so nothing
-        in the product can ever grant or revoke access. Phase 13 opening this
-        up means an approval flow, and an approval flow needs somewhere to
-        write "yes" that is not a source file.
+        in the product can ever grant or revoke access. Phase 13's approval
+        flow needs somewhere to write "yes" that is not a source file, and
+        this is it - see admin.py.
       * It has no memory. A row records when an installation appeared, who
         owns it, and whether it was ever allowed, so a request that got
         skipped can be explained afterwards. An env var explains nothing.
@@ -199,10 +199,11 @@ class Installation(Base):
         (an account gets deleted and the name is reused). An installation id
         does not move.
 
-    So the env var seeds the decision and the column HOLDS it. Flipping one
-    boolean in Postgres changes behaviour on the next webhook with no deploy,
-    which is precisely what Phase 13 will need and what proving the gate
-    works needs today.
+    So the column HOLDS the decision and a person makes it. Flipping one
+    boolean in Postgres changes behaviour on the next webhook with no deploy
+    and no restart, because installation_is_allowed below re-reads this table
+    on every delivery and caches nothing. That property is what makes an
+    approve button in a web page meaningful rather than decorative.
     """
 
     __tablename__ = "installations"
@@ -397,33 +398,26 @@ def save_diagnosis(
 # Installations and the allowlist (Phase 11)
 # ---------------------------------------------------------------------------
 
-# Comma-separated GitHub logins that are approved AT INSTALL TIME.
+# THERE IS NO LONGER AN ALLOWED_ACCOUNTS VARIABLE, AND THAT IS PHASE 13.
 #
-# This seeds is_allowed on a brand new row and is never consulted again - see
-# the long note on the Installation model for why the column, not this
-# variable, is what the gate actually reads.
+# Until now a comma-separated env var seeded is_allowed when a row was first
+# created, so an install by a listed account arrived pre-approved. That was
+# the placeholder, and it conflated two questions that are not the same one:
 #
-# Empty means empty. There is no "allow everything" value on purpose: a
-# misspelled or unset variable must fail CLOSED, and a wildcard is one typo
-# away from opening the App to all of GitHub.
-ALLOWED_ACCOUNTS_VAR = "ALLOWED_ACCOUNTS"
-
-
-def allowed_accounts() -> set[str]:
-    """Logins pre-approved by configuration, casefolded for comparison.
-
-    GitHub treats logins case-insensitively, so "JaySmith" and "jaysmith" are
-    the same account and the allowlist must not care which one was typed.
-    """
-    raw = os.environ.get(ALLOWED_ACCOUNTS_VAR, "")
-    return {part.strip().casefold() for part in raw.split(",") if part.strip()}
-
-
-def account_is_preapproved(login: str | None) -> bool:
-    """Whether this account appears in ALLOWED_ACCOUNTS."""
-    if not login:
-        return False
-    return login.strip().casefold() in allowed_accounts()
+#     who may APPROVE an installation        -> the account that owns the App
+#     which installations ARE approved       -> the is_allowed column
+#
+# Config can only ever answer the second question badly. It answers it once,
+# at install time; it cannot be changed without a redeploy; it drifts the
+# moment an account is renamed; and it lives in two places (.env and the
+# Render dashboard) that can silently disagree. Meanwhile the first question
+# has an authoritative answer available - GET /app names the owner - so it
+# needs no configuration at all.
+#
+# So the seeding is gone. EVERY new installation now lands closed, with no
+# exception for anybody, and the only way out of that state is a human with
+# the right identity pressing a button. Existing rows are untouched: see
+# upsert_installation, which has never written this column on an update.
 
 
 def get_installation(installation_id: int) -> Installation | None:
@@ -458,11 +452,16 @@ def upsert_installation(
     plain INSERT would raise a duplicate-key error on every one of those. It
     also re-sends `created` on a redelivery.
 
-    IS_ALLOWED IS ONLY EVER SET ON CREATION. An existing row keeps whatever
-    it holds, because that value may have been set by hand - which is exactly
-    what Phase 13's approval flow will do, and exactly what proving the gate
-    works does today. A later event overwriting it from the env var would
-    silently undo a deliberate revocation.
+    IS_ALLOWED IS ONLY EVER SET ON CREATION, AND ONLY EVER TO FALSE.
+
+    On creation it is false because Phase 13 removed config-based
+    pre-approval: nothing an installer controls can make their own
+    installation arrive approved.
+
+    On update it is not written at all. An existing row holds whatever the
+    approval flow put there, and a permissions change or a suspend/unsuspend
+    re-sends this event - so touching the column here would silently undo a
+    deliberate approval, or worse, a deliberate revocation.
     """
     with Session() as session:
         row = session.get(Installation, installation_id)
@@ -473,7 +472,10 @@ def upsert_installation(
                 installation_id=installation_id,
                 account_login=account_login,
                 account_type=account_type,
-                is_allowed=account_is_preapproved(account_login),
+                # Explicit, even though the column defaults to false in both
+                # Python and SQL. Approval is the one thing in this file
+                # worth stating rather than inheriting.
+                is_allowed=False,
             )
             session.add(row)
         else:
@@ -523,6 +525,46 @@ def set_installation_allowed(installation_id: int, allowed: bool) -> bool:
         row.is_allowed = allowed
         session.commit()
         return True
+
+
+def installations_for(installation_ids: list[int]) -> list[Installation]:
+    """The rows for these ids, newest first. Missing ids are simply absent.
+
+    The dashboard needs more than existing_installation_ids gives it: to tell
+    a signed-in installer *why* they are seeing nothing, it has to know
+    whether their installation is unapproved (wait for a human) or absent
+    from the table entirely (something went wrong with the install event).
+    Those are different messages, so this returns rows rather than a set of
+    ids that has already thrown that distinction away.
+    """
+    if not installation_ids:
+        return []
+    with Session() as session:
+        return list(
+            session.scalars(
+                select(Installation)
+                .where(Installation.installation_id.in_(list(installation_ids)))
+                .order_by(Installation.created_at.desc())
+            )
+        )
+
+
+def diagnosis_counts_by_installation() -> dict[int, int]:
+    """How many diagnoses each installation has produced.
+
+    Legacy rows are excluded: their installation_id is NULL, which is not a
+    key any installation can be looked up by, and folding them under some
+    placeholder id would attribute work to an installation that did not do
+    it. The admin view shows this next to each row so that revoking is an
+    informed decision rather than a blind one.
+    """
+    with Session() as session:
+        rows = session.execute(
+            select(Diagnosis.installation_id, func.count())
+            .where(Diagnosis.installation_id.is_not(None))
+            .group_by(Diagnosis.installation_id)
+        ).all()
+    return {int(key): int(count) for key, count in rows}
 
 
 def list_installations() -> list[Installation]:

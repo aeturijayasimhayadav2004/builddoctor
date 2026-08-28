@@ -9,7 +9,9 @@ import {
   logout,
 } from "./api.ts";
 import type { Diagnosis, Me, Stats } from "./api.ts";
+import AdminPanel from "./AdminPanel.tsx";
 import DiagnosisTable from "./DiagnosisTable.tsx";
+import PendingApproval from "./PendingApproval.tsx";
 import SignIn from "./SignIn.tsx";
 import StatCards from "./StatCards.tsx";
 import type { LaneFilter } from "./StatCards.tsx";
@@ -114,6 +116,12 @@ export default function App() {
 
   const firstLoad = loading && rows.length === 0 && !error;
 
+  /* The installations this viewer administers that this database also knows
+     about, and their account logins - used in three places below, so it is
+     worked out once. */
+  const installations = me?.installations ?? [];
+  const accounts = installations.map((item) => item.account_login);
+
   // Nothing at all until /api/me has answered. Rendering the signed-out page
   // during that gap would flash a "Sign in" screen at somebody who already is.
   if (me === null && loading) {
@@ -148,8 +156,8 @@ export default function App() {
         <div className="masthead-actions">
           {me?.login && (
             <span className="pulse-dot" title={
-              me.accounts?.length
-                ? `Installations: ${me.accounts.join(", ")}`
+              accounts.length
+                ? `Installations: ${accounts.join(", ")}`
                 : "No installations of BuildDoctor on this account"
             }>
               {me.login}
@@ -191,6 +199,18 @@ export default function App() {
         </div>
       )}
 
+      {/* Before anything else a signed-in viewer sees, because it explains
+          why the rest of the page is empty. Not shown to the owner while
+          they still have an approved installation - they are not waiting on
+          anybody, and the admin panel below is where they act. */}
+      {me?.pending_approval && (
+        <PendingApproval installations={installations} />
+      )}
+
+      {/* Renders nothing at all for anyone but the App owner: it 403s, and
+          the component returns null rather than an error. */}
+      {me?.is_app_owner && <AdminPanel />}
+
       {firstLoad && <LoadingAnnouncement />}
       {firstLoad && <CardsSkeleton />}
 
@@ -201,22 +221,40 @@ export default function App() {
           loss rather than like the filter working. */}
       {stats && me?.signed_in && (
         <p className="note">
-          Showing {me.installations_visible ?? 0} installation
-          {(me.installations_visible ?? 0) === 1 ? "" : "s"}
-          {me.accounts?.length ? ` (${me.accounts.join(", ")})` : ""}
+          Showing {installations.length} installation
+          {installations.length === 1 ? "" : "s"}
+          {accounts.length ? ` (${accounts.join(", ")})` : ""}
           {me.includes_legacy_rows
             ? ", plus the pre-installation rows this account owns"
             : ""}
           .
+          {/* A gap between the two means an installation was removed during
+              this session, or its `created` webhook never landed. Both are
+              worth saying rather than quietly reconciling. */}
+          {typeof me.installations_at_login === "number" &&
+            me.installations_at_login > installations.length && (
+              <>
+                {" "}
+                GitHub listed {me.installations_at_login} at sign-in; the
+                difference is no longer on record here.
+              </>
+            )}
         </p>
       )}
 
       {firstLoad && <TableSkeleton />}
 
-      {!loading && !error && rows.length === 0 && (
+      {/* Three different reasons for an empty table, and they used to look
+          identical. Pending is handled by the banner above, so this says the
+          other two out loud rather than implying the first. */}
+      {!loading && !error && rows.length === 0 && !me?.pending_approval && (
         <p className="note">
-          No diagnoses yet for your installations. BuildDoctor writes a row
-          the first time a workflow fails on a repository it is installed on.
+          {installations.length === 0
+            ? "BuildDoctor is not installed on any account you administer. " +
+              "Install it on a repository and its failures will appear here."
+            : "No diagnoses yet for your installations. BuildDoctor writes a " +
+              "row the first time a workflow fails on a repository it is " +
+              "installed on."}
         </p>
       )}
 

@@ -42,6 +42,7 @@ from starlette.middleware.sessions import SessionMiddleware
 load_dotenv()
 
 import app_auth  # noqa: E402
+import admin  # noqa: E402
 import dashboard  # noqa: E402
 import db  # noqa: E402
 import diagnose  # noqa: E402
@@ -87,6 +88,13 @@ app = FastAPI(title="BuildDoctor", version="0.7.0", lifespan=lifespan)
 # see the module docstring in dashboard.py for why this is not its own
 # service.
 app.include_router(dashboard.router)
+
+# Approving installations (Phase 13). Its own module, and its own router,
+# because it holds the only browser-reachable route in the service that
+# writes - see the docstring in admin.py. Mounted after the dashboard so
+# that /api/admin/* sits visibly apart from the read routes in the OpenAPI
+# schema rather than being mixed in among them.
+app.include_router(admin.router)
 
 # The dashboard is served by Vite on port 5173 while the API is on 8000.
 # Different port means different ORIGIN, and a browser refuses to hand a
@@ -630,8 +638,9 @@ async def handle_installation_event(payload: dict) -> None:
         )
         if not row.is_allowed:
             print(
-                f"       {login!r} is not in ALLOWED_ACCOUNTS, so this "
-                f"installation will be skipped until is_allowed is set true."
+                f"       every new installation lands closed. Builds from "
+                f"{login!r} are skipped until the App owner approves it in "
+                f"the dashboard's admin view (or is_allowed is set by hand)."
             )
     else:
         print(
