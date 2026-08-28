@@ -922,6 +922,13 @@ This key does not expire and cannot be scoped down. Anyone holding it can mint
 an installation token for every place the App is installed - it is strictly
 more dangerous than any token it produces.
 
+**`OWNER_NOTIFY_WEBHOOK`** - an incoming webhook URL from Discord or Slack.
+Optional, and unset is a supported state: the message goes to the log
+instead, and the admin panel is still the authoritative list of what is
+waiting. A secret, because anyone holding it can post into that channel -
+nothing prints it, including on failure. See
+[notifications](#the-one-notification-this-project-sends).
+
 **`GITHUB_APP_ID`**, **`GITHUB_APP_CLIENT_ID`**, **`GITHUB_APP_SLUG`** - not
 secrets. Public identifiers from the App's settings page, committed to
 `render.yaml`. The client ID is preferred as the JWT issuer: GitHub's docs now
@@ -1172,7 +1179,7 @@ form:
 | Permission | Level | Needed for |
 | ---------- | ----- | ---------- |
 | Actions | Read | listing failed jobs, downloading logs |
-| Contents | Read and write | read: commit diffs. write: commit comments |
+| Contents | Read | commit diffs |
 | Issues | Read and write | PR conversation comments, the `needs-review` label |
 | Pull requests | Read and write | reading PR diffs |
 | Metadata | Read | mandatory, selected automatically |
@@ -1180,9 +1187,33 @@ form:
 Actions is deliberately left at **Read**, so the amber lane's re-run returns
 403 and falls back to leaving a comment - a path
 [`graph.py`](graph.py) already handled. Amber has never fired in production,
-so this costs nothing today. Raising it later means every installation must
-manually **accept** the new permission before it takes effect, which is the
-reason to get this list right the first time.
+so this costs nothing today.
+
+**Contents was narrowed from Read and write to Read in Phase 14.** It had
+been at write since the App was registered, on the theory that commit
+comments needed it; they do not - commit comments are covered by Issues, and
+nothing in this codebase has ever written repository contents. A permission
+that is granted but unused is a standing claim on every installer's
+repositories that the code cannot justify, and the guide had to apologise for
+it in a table anyone reads before installing.
+
+The direction of a permission change decides how much it costs, and the two
+directions are not symmetric:
+
+> "When you add new repository or organization permissions for an app, each
+> account where the app is installed will need to approve the new
+> permissions." ... "If you remove permissions or webhooks from your GitHub
+> App, the changes will take effect immediately."
+
+So narrowing is free and instant, and widening is a manual accept by every
+installer. That asymmetry is the argument for narrowing **now**, while there
+are two installations, rather than at the point where it starts to matter -
+and it is the reason to get the list right the first time.
+
+Verified against
+[GitHub's docs](https://docs.github.com/en/apps/maintaining-github-apps/editing-a-github-apps-permissions)
+before the change, not recalled - see the section above on why that habit
+exists.
 
 ### Why PyJWT and not a GitHub SDK
 
@@ -1283,12 +1314,19 @@ through one environment variable:
 | Who may **approve** an installation | `GET /app` - the account that registered BuildDoctor | a transfer of the App on GitHub |
 | Which installations **are** approved | `installations.is_allowed` in Postgres | one row write, no redeploy |
 
-**Every new installation lands closed.** There is no configuration that
-pre-approves anybody, including the owner's own account: the seeding variable
-was deleted rather than renamed, because a login sitting in a config file goes
-stale the moment the account is renamed, and it has to be kept identical in
-`.env` and in the Render dashboard - two places that can disagree without
-anyone noticing.
+**No configuration pre-approves anybody**, including the owner's own
+account. Phase 11's seeding variable was deleted rather than renamed, because
+a login sitting in a config file goes stale the moment the account is
+renamed, and it has to be kept identical in `.env` and in the Render
+dashboard - two places that can disagree without anyone noticing.
+
+Phase 13 could therefore say *every new installation lands closed*, full
+stop. Since Phase 14 that is no longer true, and the replacement is narrower
+rather than looser: an installation lands **open only if every repository it
+covers is public and the set of them is fixed** - a property read from the
+webhook payload, not from configuration and not from who the installer is.
+Everything else still lands closed. See
+[automatic approval](#automatic-approval-and-the-exact-promise-it-makes-phase-14).
 
 **Who may approve is not configured at all.** It is the `owner` of `GET /app`,
 compared against the signed-in user's GitHub id - the same value that already
@@ -1346,6 +1384,118 @@ Note that approval and visibility stay separate, as they were in Phase 12.
 Revoking `is_allowed` stops BuildDoctor working for an installation; it does
 not confiscate diagnoses already written about that account's repositories.
 
+### Automatic approval, and the exact promise it makes (Phase 14)
+
+Phase 13 made every installation wait for a human. That was the right
+default and the wrong permanent state: it put a step in the installation
+guide reading *"tell the owner you installed it"*, flagged as the step people
+skip, with no notification behind it. The approval queue only worked while
+every installer already knew the operator personally.
+
+Phase 14 approves an installation automatically **when every repository it
+covers is public**, and leaves everything else exactly as it was.
+
+The justification is not convenience, it is that approval was buying nothing
+in that case. What approval protects is disclosure: a build log goes to Groq
+and is stored indefinitely. A public repository's build logs are already
+readable by anyone who asks GitHub for them, so BuildDoctor reading one
+discloses nothing that was not already open. A private repository's logs are
+a genuine decision, and that decision stays with a person.
+
+#### The rule, and why it is narrower than it looks
+
+Two conditions, both required:
+
+| Condition | Why |
+| --------- | --- |
+| `repository_selection == "selected"` | an "all repositories" install silently covers every repository the account creates later |
+| every entry in `repositories` has `private == false` | the actual disclosure question |
+
+The first condition rejects installations whose repositories are **all public
+today**, and that is deliberate. An automatic approval is a promise about
+tomorrow, and for an `all` installation there is no way to keep it: whether
+GitHub even sends `installation_repositories` when a repository is created
+under an `all` install is
+[contradicted within GitHub's own community thread on it](https://github.com/orgs/community/discussions/24379).
+An unanswerable question about future private repositories is answered by
+refusing to make the promise.
+
+Two smaller things worth stating because both were checked rather than
+assumed:
+
+- **The field is `private`, not `visibility`.** The repository objects
+  embedded in an installation payload are the *minimal* shape - exactly
+  `id`, `node_id`, `name`, `full_name`, `private` - and GitHub's webhook
+  reference documents the array without documenting its contents. This was
+  read off a real delivery from the App's own log.
+- **`repo.get("private", True)`** defaults a missing key to private, so a
+  payload shape change makes installations wait for a human rather than
+  sail through.
+
+#### Keeping the promise after the fact
+
+"Every repository is public" is a statement about a set, and a set can change
+after the statement is made. Three ways, all handled:
+
+| What happens | Event | Effect |
+| ------------ | ----- | ------ |
+| a private repo is added to the installation | `installation_repositories` | approval withdrawn |
+| the installation is widened to "all repositories" | `installation_repositories` | approval withdrawn |
+| a covered repo is switched to private | `repository` / `privatized` | approval withdrawn |
+
+The last row needs the App to be **subscribed to the `repository` event**,
+which is a checkbox in the App's settings and not something code can arrange.
+The handler exists either way; an unsubscribed App simply never calls it. The
+first two rows work with no subscription at all, because `installation` and
+`installation_repositories` are delivered to every App unconditionally.
+
+Withdrawal is **one-way**. Removing the last private repository does not earn
+the approval back, and `publicized` does not either. Otherwise approval would
+be reversible by anyone who can add and remove a repository - a control the
+installer holds and the owner does not.
+
+#### Why `approval_source` had to exist
+
+The rule above is wrong in one case, and the case is common: an installation
+a **person** deliberately approved, which later gains a private repository.
+Withdrawing that would be the App overruling the human it exists to serve.
+
+`is_allowed` alone cannot tell the two apart, because `true` looks identical
+however it got there. So the row records what decided it:
+
+| `approval_source` | Meaning | Auto-withdrawn? |
+| ----------------- | ------- | --------------- |
+| `auto_public` | every repository was public | **yes** |
+| `owner` | a person pressed Approve | never |
+| `NULL` | not approved, or approved before this column existed | never |
+
+The two installations that predate Phase 14 migrate to `NULL`, which is the
+honest value - nobody recorded a reason at the time. Backfilling them to
+`owner` would have written a guess into the database as a fact, and it
+matters that `NULL` is not `auto_public`: the migration therefore cannot hand
+an existing approval to a rule invented after it was granted.
+
+### The one notification this project sends
+
+Since public-only installs no longer need anybody, what is left is small
+enough to be worth interrupting somebody about: an installation arrived that
+includes a private repository, or an automatic approval was just withdrawn.
+
+[`notify.py`](notify.py) posts one line of plain text to an incoming webhook
+URL - Discord or Slack, chosen by the host, because the two want the same
+string under different key names and neither accepts the other's. There is no
+SDK, no account beyond one already held, and no secret with meaningful blast
+radius: the URL grants the ability to post into one channel and nothing else.
+
+It is **fire-and-forget and cannot raise**. It runs inside a webhook handler
+on GitHub's ten-second delivery clock, after the real work has already
+succeeded, so every failure is caught and printed. A missed message is a much
+smaller problem than a webhook endpoint that starts returning errors and gets
+the App marked as a broken integration.
+
+Unset is supported rather than degraded: the line goes to the log, and the
+admin panel remains the authoritative list.
+
 ### Installation lifecycle
 
 The `installation` event is delivered to every GitHub App and cannot be
@@ -1353,16 +1503,22 @@ unsubscribed. All five actions are handled rather than assuming `created`:
 
 | Action | Effect |
 | ------ | ------ |
-| `created` | insert a row with `is_allowed = false`, always |
+| `created` | insert a row; `is_allowed` set from the public-only verdict |
 | `deleted` | delete the row, and drop any cached token |
 | `new_permissions_accepted` | refresh the descriptive fields only |
 | `suspend` / `unsuspend` | refresh the descriptive fields only |
 
-`is_allowed` is set **only on creation, and only ever to false**. An existing
-row keeps whatever the approval flow put there. GitHub re-sends this event on
-permission changes and on suspend/unsuspend, so writing the column on an
-update would silently undo a deliberate approval - or worse, a deliberate
-revocation.
+`is_allowed` is set **only on creation**. Phase 13 could state the stronger
+version of that - *and only ever to false* - because approval was always a
+human act; Phase 14 makes the creation-time value a decision instead of a
+constant, and the caller passes it in.
+
+The half that protects anything is unchanged: **on update the column is not
+written at all.** An existing row keeps whatever the approval flow put there.
+GitHub re-sends this event on permission changes and on suspend/unsuspend, so
+recomputing the verdict on an update would silently undo a deliberate
+approval - or worse, reopen a deliberate revocation the next time somebody
+accepted a permission change. Both directions are covered by a test.
 
 Suspension does not remove the row. A suspended installation still exists and
 keeps its approval; treating suspension as removal would revoke something an
@@ -1886,6 +2042,7 @@ One row per place the App is installed.
 | `account_type` | varchar(32) | `User` or `Organization` |
 | `created_at` | timestamptz | |
 | `is_allowed` | boolean | **the gate.** `NOT NULL`, `server_default false` |
+| `approval_source` | varchar(32) | `auto_public`, `owner`, or NULL. What decided, which is what makes a withdrawal safe - see [why it had to exist](#why-approval_source-had-to-exist) |
 
 The default is spelled as SQL `false` rather than only a Python default, so a
 row inserted by hand - psql, a migration, anything that is not `db.py` - also
@@ -2028,8 +2185,23 @@ the App. There is no delegation, no team, and no per-organisation admin.
 One approver is correct while there is one operator.
 
 **Notifying an installer when they are approved.** They find out by loading
-the dashboard, or by their next build being diagnosed. Email or a GitHub
-notification would need a channel this project does not have.
+the dashboard, or by their next build being diagnosed. The webhook added in
+Phase 14 points at the operator's own channel, which is the wrong end - the
+installer has no channel this project knows about.
+
+**Re-checking repository visibility on a schedule.** Withdrawal is driven
+entirely by webhooks, so it is only as complete as the events the App is
+subscribed to. Nothing sweeps the installations table asking GitHub what each
+repository looks like now. A poll would close the gap left by an unsubscribed
+`repository` event, at the cost of a periodic job on a service whose whole
+Phase 10 was about not having background work. Not worth it at two
+installations.
+
+**Refreshing the installation list without a round trip.** The "Refresh
+access" button re-runs the OAuth flow, which is fast because github.com
+already knows the user, but it is still a redirect. Doing it silently would
+mean storing the user access token, which is the one thing Phase 12 decided
+against.
 
 ## Note on version control
 

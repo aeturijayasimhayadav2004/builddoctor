@@ -123,6 +123,18 @@ def _serialise(row: db.Installation, diagnosis_count: int) -> dict:
         "account_type": row.account_type,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "is_allowed": row.is_allowed,
+        # WHAT approved it, which since Phase 14 is not always a person.
+        # Surfaced rather than kept internal because the two kinds of yes
+        # behave differently: an "auto_public" approval can be withdrawn by
+        # this App on its own if a private repository turns up, and an
+        # "owner" approval never is. Somebody looking at this list deserves
+        # to know which of their approvals are load-bearing.
+        #
+        # Null covers both "not approved" and "approved before this column
+        # existed" - the two installations that predate Phase 14. Not
+        # backfilled to "owner", because that would be a guess recorded as
+        # a fact.
+        "approval_source": row.approval_source,
         # How much work has actually been done for this installation. A
         # pending row with diagnoses behind it means it was approved once
         # and revoked, which is worth seeing before approving it again.
@@ -175,7 +187,15 @@ def set_allowed(
     "approved" for something that no longer exists would be a lie the UI
     then displays.
     """
-    changed = db.set_installation_allowed(installation_id, body.allowed)
+    # source=APPROVAL_OWNER is what makes this decision permanent against
+    # the automation. Phase 14 can withdraw an approval it granted itself
+    # when a private repository appears; it must never withdraw one a person
+    # made, and the stamp written here is the only thing separating the two.
+    # (set_installation_allowed ignores the source when revoking, because a
+    # closed gate has no approval to attribute.)
+    changed = db.set_installation_allowed(
+        installation_id, body.allowed, source=db.APPROVAL_OWNER
+    )
     if not changed:
         raise HTTPException(
             status_code=404,

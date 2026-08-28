@@ -230,3 +230,20 @@ services:
       # third-party-cookie behaviour browsers are removing. Leave it empty.
       - key: DASHBOARD_ORIGINS
         value: ""
+
+      # WHERE TO SHOUT WHEN SOMETHING NEEDS A DECISION (Phase 14).
+      #
+      # An incoming webhook URL from Discord or Slack. sync: false, like
+      # every other secret here: the value is typed into the Render dashboard
+      # and never committed, because anyone holding it can post into that
+      # channel.
+      #
+      # OPTIONAL. Unset simply means the notification is written to the log
+      # instead, which is exactly what Phase 13 did, and the admin panel is
+      # still the authoritative list of what is waiting. Since Phase 14
+      # approves public-only installations by itself, the only messages this
+      # ever carries are the ones that genuinely need a person: an install
+      # that includes a private repository, and an automatic approval being
+      # withdrawn because a private repository appeared.
+      - key: OWNER_NOTIFY_WEBHOOK
+        sync: false

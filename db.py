@@ -245,10 +245,40 @@ class Installation(Base):
         Boolean, nullable=False, server_default=text("false"), default=False
     )
 
+    # WHY THE COLUMN ABOVE NEEDED A SECOND ONE NEXT TO IT (Phase 14)
+    #
+    # is_allowed records the DECISION. This records WHAT MADE IT, and Phase 14
+    # cannot be correct without the distinction.
+    #
+    # Phase 14 approves an installation automatically when every repository it
+    # covers is public. That promise has to survive the repository set
+    # changing afterwards: an install that was all-public when it arrived and
+    # later gains a private repository must stop being approved, or an
+    # automatic yes silently comes to cover something nobody examined.
+    #
+    # But "a private repository appeared, so revoke" is WRONG when a human
+    # deliberately approved a private installation - that rule would undo
+    # their decision on their behalf. The two cases are indistinguishable from
+    # is_allowed alone, because true looks the same however it got there.
+    #
+    # So: only a row that says APPROVAL_AUTO_PUBLIC is ever revoked
+    # automatically. APPROVAL_OWNER means a person looked at it and said yes,
+    # and nothing here overrules that except the same person.
+    #
+    # NULL means "not approved, or approved before this column existed". The
+    # two installations that predate Phase 14 land here, and that is the
+    # honest value - nobody recorded why at the time. It matters that NULL is
+    # not APPROVAL_AUTO_PUBLIC: the migration therefore cannot hand an
+    # existing approval to a rule written after it was granted.
+    approval_source: Mapped[str | None] = mapped_column(
+        String(32), nullable=True
+    )
+
     def __repr__(self) -> str:
         return (
             f"<Installation id={self.installation_id} "
-            f"account={self.account_login!r} allowed={self.is_allowed}>"
+            f"account={self.account_login!r} allowed={self.is_allowed} "
+            f"via={self.approval_source!r}>"
         )
 
 
@@ -322,6 +352,17 @@ MIGRATIONS = (
         "index diagnoses.installation_id",
         "CREATE INDEX IF NOT EXISTS ix_diagnoses_installation_id "
         "ON diagnoses (installation_id)",
+    ),
+    # Phase 14. Additive and nullable, so it needs no backfill and no
+    # default: every existing row becomes NULL, which is the correct value
+    # for "approved before anyone recorded why". Deliberately NOT defaulted
+    # to 'owner' - that would write a guess into the database as though it
+    # were a fact, and would hand those rows to a rule that did not exist
+    # when they were approved.
+    (
+        "add installations.approval_source",
+        "ALTER TABLE installations ADD COLUMN IF NOT EXISTS "
+        "approval_source VARCHAR(32)",
     ),
 )
 
@@ -420,6 +461,18 @@ def save_diagnosis(
 # upsert_installation, which has never written this column on an update.
 
 
+# The two ways an installation can come to be approved. Plain strings
+# rather than an enum: they are written to a VARCHAR and read back by a
+# dashboard written in another language, so an enum would buy type safety on
+# one side of a wire whose other side is TypeScript.
+#
+# Anything not in this pair - including NULL - is treated as "not
+# automatically approved" by every rule that consults it. That is the safe
+# direction: a value this code does not recognise never unlocks anything.
+APPROVAL_AUTO_PUBLIC = "auto_public"
+APPROVAL_OWNER = "owner"
+
+
 def get_installation(installation_id: int) -> Installation | None:
     with Session() as session:
         return session.get(Installation, installation_id)
@@ -444,6 +497,8 @@ def upsert_installation(
     installation_id: int,
     account_login: str,
     account_type: str | None = None,
+    approve_on_create: bool = False,
+    approval_source: str | None = None,
 ) -> tuple[Installation, bool]:
     """Record an installation. Returns the row and whether it was created.
 
@@ -452,16 +507,24 @@ def upsert_installation(
     plain INSERT would raise a duplicate-key error on every one of those. It
     also re-sends `created` on a redelivery.
 
-    IS_ALLOWED IS ONLY EVER SET ON CREATION, AND ONLY EVER TO FALSE.
+    IS_ALLOWED IS STILL ONLY EVER SET ON CREATION. THAT IS THE INVARIANT.
 
-    On creation it is false because Phase 13 removed config-based
-    pre-approval: nothing an installer controls can make their own
-    installation arrive approved.
+    Phase 13 could state the stronger version of this - "and only ever to
+    false" - because approval was always a human act. Phase 14 approves an
+    all-public installation automatically, so the creation-time value is now
+    a decision rather than a constant, and approve_on_create carries it.
 
-    On update it is not written at all. An existing row holds whatever the
-    approval flow put there, and a permissions change or a suspend/unsuspend
-    re-sends this event - so touching the column here would silently undo a
-    deliberate approval, or worse, a deliberate revocation.
+    What has NOT changed, and is the half that actually protects anything:
+    ON UPDATE THIS COLUMN IS NOT WRITTEN AT ALL. GitHub re-sends the
+    `installation` event on permission changes and on suspend/unsuspend, so a
+    row that a person approved - or that a person deliberately REVOKED - must
+    survive those untouched. An update path that recomputed the verdict would
+    reopen a closed gate the next time somebody accepted a permission change.
+
+    The caller decides the verdict, not this function. The payload it is read
+    from is main.py's business, and a storage module that started inspecting
+    webhook shapes would be doing two jobs in one place. All this promises is
+    that the decision is written exactly once, at creation.
     """
     with Session() as session:
         row = session.get(Installation, installation_id)
@@ -472,10 +535,14 @@ def upsert_installation(
                 installation_id=installation_id,
                 account_login=account_login,
                 account_type=account_type,
-                # Explicit, even though the column defaults to false in both
-                # Python and SQL. Approval is the one thing in this file
-                # worth stating rather than inheriting.
-                is_allowed=False,
+                is_allowed=bool(approve_on_create),
+                # Derived from the boolean rather than stored independently.
+                # A row that is not approved has no approval to attribute,
+                # and letting the two drift would leave rows claiming to have
+                # been auto-approved while sitting closed.
+                approval_source=(
+                    approval_source if approve_on_create else None
+                ),
             )
             session.add(row)
         else:
@@ -512,17 +579,28 @@ def remove_installation(installation_id: int) -> bool:
         return True
 
 
-def set_installation_allowed(installation_id: int, allowed: bool) -> bool:
+def set_installation_allowed(
+    installation_id: int,
+    allowed: bool,
+    *,
+    source: str | None = None,
+) -> bool:
     """Flip the gate for one installation. Returns whether the row existed.
 
     The write half of the reason is_allowed is a column: this takes effect on
     the very next webhook, with no deploy and no restart.
+
+    `source` records what made the decision. It only means anything when
+    granting: revoking CLEARS it, because a closed gate has no approval to
+    attribute, and leaving a stale value behind would let a later
+    re-approval inherit provenance from a decision already withdrawn.
     """
     with Session() as session:
         row = session.get(Installation, installation_id)
         if row is None:
             return False
         row.is_allowed = allowed
+        row.approval_source = source if allowed else None
         session.commit()
         return True
 

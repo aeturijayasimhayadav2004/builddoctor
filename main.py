@@ -50,6 +50,7 @@ import embeddings  # noqa: E402
 import github_client  # noqa: E402
 import graph  # noqa: E402
 import memory  # noqa: E402
+import notify  # noqa: E402
 import user_auth  # noqa: E402
 from log_excerpt import extract_error_excerpt  # noqa: E402
 
@@ -508,6 +509,21 @@ async def webhook(request: Request, background: BackgroundTasks):
         await handle_installation_event(payload)
         return {"received": True}
 
+    # The repository set of an EXISTING installation changed. Phase 14 cares
+    # because its automatic approval is a statement about a set of
+    # repositories, and a statement about a set stops being true when the set
+    # changes underneath it.
+    if event == "installation_repositories":
+        await handle_installation_repositories_event(payload)
+        return {"received": True}
+
+    # A repository changed visibility without the installation changing at
+    # all. Inert unless the App is subscribed to the `repository` event - see
+    # the handler for what that costs and why it is worth asking for.
+    if event == "repository":
+        await handle_repository_event(payload)
+        return {"received": True}
+
     is_failed_run = (
         event == "workflow_run"
         and action == "completed"
@@ -584,6 +600,250 @@ async def resolve_and_check(payload: dict) -> int | None:
     return installation_id
 
 
+def public_only_verdict(payload: dict) -> tuple[bool, str]:
+    """Can this installation be approved without asking a human? And why.
+
+    Returns (approve, reason). The reason is logged either way, because "it
+    was approved automatically" and "it is waiting for you" are both facts
+    somebody will need explained later, and a boolean explains neither.
+
+    THE RULE: every repository the installation covers must be public, and
+    the installation must cover a KNOWN, FIXED set of them.
+
+    That second half is the part worth arguing for, because it rejects
+    installations whose repositories are all public today.
+
+    An installation made with "All repositories" has repository_selection ==
+    "all". Every repository the account creates from then on is covered
+    automatically, and the evidence on whether GitHub sends
+    installation_repositories for those is contradictory - GitHub's own
+    community thread on it says both that the event fires and that it does
+    not. So for an "all" installation there is no way to promise the
+    all-public property still holds tomorrow, and an automatic approval is
+    exactly a promise about tomorrow. It is refused rather than guessed at.
+
+    Note `private` and not `visibility`: the repository objects embedded in an
+    installation payload are the MINIMAL shape, five keys, and visibility is
+    not among them. This was read off a real delivery rather than assumed,
+    because the webhook reference documents the array but not its contents.
+
+    The default in `.get("private", True)` is the other half of failing
+    closed. If GitHub ever ships a payload without the key, every repository
+    reads as private and the installation waits for a human - which is the
+    behaviour that was correct before this function existed.
+    """
+    installation = payload.get("installation") or {}
+    selection = installation.get("repository_selection")
+    repositories = payload.get("repositories")
+
+    if selection != "selected":
+        return False, (
+            f"repository_selection is {selection!r}, not 'selected' - an "
+            f"install covering ALL repositories can gain a private one later "
+            f"without this App being told"
+        )
+
+    if not repositories:
+        # An empty or absent list is not "no private repositories". It is no
+        # evidence, and no evidence cannot support a yes.
+        return False, "the payload listed no repositories to judge"
+
+    private = [
+        repo.get("full_name") or "?"
+        for repo in repositories
+        if repo.get("private", True)
+    ]
+
+    if private:
+        shown = ", ".join(private[:3])
+        more = f" and {len(private) - 3} more" if len(private) > 3 else ""
+        return False, (
+            f"{len(private)} of {len(repositories)} selected repositories "
+            f"are private ({shown}{more})"
+        )
+
+    return True, (
+        f"all {len(repositories)} selected repositories are public"
+    )
+
+
+def _approval_link() -> str:
+    """Where to go to approve something. Built from the configured base URL."""
+    return f"{user_auth.public_base_url().rstrip('/')}/dashboard/"
+
+
+async def _close_auto_approved(
+    installation_id: int, login: str, cause: str
+) -> None:
+    """Withdraw an AUTOMATIC approval, and say so out loud.
+
+    Called only after the caller has established that this row was approved
+    automatically. Revoking clears approval_source, so the row returns to
+    exactly the state a brand new private installation arrives in: closed,
+    unattributed, and waiting for a person.
+
+    The owner is told, and that is not optional politeness. Silently revoking
+    would mean an installation that worked yesterday stops working today with
+    the reason visible only in a server log, which is the failure mode Phase
+    13 spent its time removing from the installer's side of the flow.
+    """
+    await asyncio.to_thread(db.set_installation_allowed, installation_id, False)
+    print(
+        f"  AUTO-APPROVAL WITHDRAWN: installation {installation_id} "
+        f"({login}) - {cause}"
+    )
+    print(
+        "       it is now closed and needs manual approval, exactly as a "
+        "private installation would have from the start."
+    )
+    await notify.owner(
+        f"BuildDoctor: {login} is no longer auto-approved.\n"
+        f"Why: {cause}.\n"
+        f"It was approved automatically because every repository was public, "
+        f"and that is no longer true. Builds are being skipped until you "
+        f"approve it by hand: {_approval_link()}"
+    )
+
+
+async def handle_installation_repositories_event(payload: dict) -> None:
+    """Repositories were added to or removed from an existing installation.
+
+    THE CASE THIS EXISTS FOR: an installation arrives covering two public
+    repositories, is approved automatically, and a week later the owner adds
+    a private one. Nothing in the `installation` event fires for that. Without
+    this handler the automatic yes - which was a statement about two public
+    repositories - silently comes to cover a private one nobody looked at.
+
+    ONLY AN AUTOMATIC APPROVAL IS EVER WITHDRAWN HERE. If a person approved
+    this installation, adding a private repository is that person's decision
+    to have made, and revoking it would be this code overruling the human it
+    is supposed to be serving. That distinction is the entire reason
+    approval_source exists - see the column comment in db.py.
+
+    REMOVING the last private repository does NOT earn an automatic approval
+    back. The rule is deliberately one-way: once an installation has needed a
+    human, it keeps needing one. Re-approving on removal would make approval
+    reversible by anyone who can add and remove a repository, which is a
+    control the installer holds and the owner does not.
+    """
+    action = payload.get("action")
+    installation = payload.get("installation") or {}
+    installation_id = installation.get("id")
+
+    if installation_id is None:
+        print("  installation_repositories event with no installation.id")
+        return
+
+    installation_id = int(installation_id)
+    account = installation.get("account") or {}
+    login = account.get("login") or "unknown"
+
+    row = await asyncio.to_thread(db.get_installation, installation_id)
+    if row is None:
+        print(
+            f"  repository set changed on installation {installation_id} "
+            f"({login}), which is not on record here - nothing to re-check"
+        )
+        return
+
+    if not (row.is_allowed and row.approval_source == db.APPROVAL_AUTO_PUBLIC):
+        # Either already closed, or approved by a person. Both are left alone,
+        # and the log says which so the silence is explainable.
+        state = (
+            "approved by hand" if row.is_allowed else "not approved"
+        )
+        print(
+            f"  repository set changed on installation {installation_id} "
+            f"({login}, {state}, action={action!r}) - automatic approval is "
+            f"not in play, so nothing changes"
+        )
+        return
+
+    # repository_selection is re-sent on this event because it can CHANGE
+    # here: switching an installation from named repositories to "all" is a
+    # repository-set change, and it defeats the auto-approval rule just as
+    # surely as adding a private repository does.
+    selection = payload.get("repository_selection") or installation.get(
+        "repository_selection"
+    )
+    added = payload.get("repositories_added") or []
+    newly_private = [
+        repo.get("full_name") or "?"
+        for repo in added
+        if repo.get("private", True)
+    ]
+
+    if selection and selection != "selected":
+        cause = (
+            f"the installation was widened to cover ALL repositories, so "
+            f"future private ones would be included without notice"
+        )
+    elif newly_private:
+        cause = (
+            f"a private repository was added ({', '.join(newly_private)})"
+        )
+    else:
+        print(
+            f"  installation {installation_id} ({login}) changed its "
+            f"repositories (action={action!r}, {len(added)} added, all "
+            f"public) - still every-repository-public, still approved"
+        )
+        return
+
+    await _close_auto_approved(installation_id, login, cause)
+
+
+async def handle_repository_event(payload: dict) -> None:
+    """A repository changed visibility under an installation we already have.
+
+    THE HOLE THIS CLOSES. Flipping a repository from public to private in its
+    own settings is not an installation change: no `installation` event and no
+    `installation_repositories` event is sent. An installation approved
+    automatically because everything was public would keep that approval over
+    a repository that is now private.
+
+    INERT UNLESS THE APP SUBSCRIBES TO THE `repository` EVENT, which is a
+    checkbox in the App's settings rather than anything this code can arrange.
+    Written and mounted anyway, for two reasons: the handler has to exist
+    before subscribing is useful, and an unsubscribed App simply never calls
+    it, which costs nothing.
+
+    Only `privatized` is acted on. `publicized` deliberately does NOT restore
+    an approval, for the same one-way reason as the handler above.
+    """
+    action = payload.get("action")
+    if action != "privatized":
+        return
+
+    installation = payload.get("installation") or {}
+    installation_id = installation.get("id")
+    repo = (payload.get("repository") or {}).get("full_name") or "a repository"
+
+    if installation_id is None:
+        # `repository` events reach an App through its installation, so this
+        # should not happen; if it does, there is nothing to key on.
+        print(f"  {repo} was made private, but the event carries no installation")
+        return
+
+    installation_id = int(installation_id)
+    row = await asyncio.to_thread(db.get_installation, installation_id)
+    if row is None:
+        return
+
+    login = row.account_login
+
+    if not (row.is_allowed and row.approval_source == db.APPROVAL_AUTO_PUBLIC):
+        print(
+            f"  {repo} was made private on installation {installation_id} "
+            f"({login}) - not an automatic approval, so nothing changes"
+        )
+        return
+
+    await _close_auto_approved(
+        installation_id, login, f"{repo} was made private"
+    )
+
+
 async def handle_installation_event(payload: dict) -> None:
     """Record, update, or delete an installation as its lifecycle changes.
 
@@ -623,24 +883,49 @@ async def handle_installation_event(payload: dict) -> None:
         )
         return
 
+    # THE PHASE 14 DECISION, made here rather than in db.py: reading a
+    # webhook payload is this module's job, and storage should not learn the
+    # shape of GitHub's events. The verdict is computed for every action but
+    # only ever USED on creation - upsert_installation refuses to write the
+    # column on an update, which is what stops a permissions change or a
+    # suspend/unsuspend from silently recomputing an approval a person made.
+    approve, reason = public_only_verdict(payload)
+
     row, created = await asyncio.to_thread(
         db.upsert_installation,
         installation_id=installation_id,
         account_login=login,
         account_type=account_type,
+        approve_on_create=approve,
+        approval_source=db.APPROVAL_AUTO_PUBLIC,
     )
 
     if created:
-        verdict = "ALLOWED" if row.is_allowed else "NOT allowed"
+        verdict = "AUTO-APPROVED" if row.is_allowed else "NOT allowed"
         print(
             f"  INSTALLED: installation {installation_id} on {login} "
             f"({account_type}) -> {verdict}"
         )
-        if not row.is_allowed:
+        print(f"       {reason}")
+        if row.is_allowed:
             print(
-                f"       every new installation lands closed. Builds from "
-                f"{login!r} are skipped until the App owner approves it in "
-                f"the dashboard's admin view (or is_allowed is set by hand)."
+                "       nobody was asked, and nobody needs to be: a public "
+                "repository's build logs are already public, so this App "
+                "reading them discloses nothing that was not already open."
+            )
+        else:
+            print(
+                f"       builds from {login!r} are skipped until the App "
+                f"owner approves it in the dashboard's admin view (or "
+                f"is_allowed is set by hand)."
+            )
+            # The one case Phase 14 still leaves needing a human, so it is
+            # the one case worth interrupting somebody about.
+            await notify.owner(
+                f"BuildDoctor: {login} ({account_type}) installed the App "
+                f"and is waiting for approval.\n"
+                f"Not automatic because: {reason}.\n"
+                f"Approve or ignore it here: {_approval_link()}"
             )
     else:
         print(

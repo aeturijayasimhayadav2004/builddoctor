@@ -12,6 +12,7 @@ import type { Diagnosis, Me, Stats } from "./api.ts";
 import AdminPanel from "./AdminPanel.tsx";
 import DiagnosisTable from "./DiagnosisTable.tsx";
 import PendingApproval from "./PendingApproval.tsx";
+import RefreshAccess from "./RefreshAccess.tsx";
 import SignIn from "./SignIn.tsx";
 import StatCards from "./StatCards.tsx";
 import type { LaneFilter } from "./StatCards.tsx";
@@ -238,7 +239,8 @@ export default function App() {
                 GitHub listed {me.installations_at_login} at sign-in; the
                 difference is no longer on record here.
               </>
-            )}
+            )}{" "}
+          <RefreshAccess label="Signed in elsewhere? Refresh access" />
         </p>
       )}
 
@@ -247,16 +249,33 @@ export default function App() {
       {/* Three different reasons for an empty table, and they used to look
           identical. Pending is handled by the banner above, so this says the
           other two out loud rather than implying the first. */}
-      {!loading && !error && rows.length === 0 && !me?.pending_approval && (
-        <p className="note">
-          {installations.length === 0
-            ? "BuildDoctor is not installed on any account you administer. " +
-              "Install it on a repository and its failures will appear here."
-            : "No diagnoses yet for your installations. BuildDoctor writes a " +
-              "row the first time a workflow fails on a repository it is " +
-              "installed on."}
-        </p>
-      )}
+      {!loading &&
+        !error &&
+        rows.length === 0 &&
+        !me?.pending_approval &&
+        (installations.length === 0 ? (
+          /* Two very different situations produce this screen, and before
+             Phase 14 it only admitted to one of them. "Not installed" is the
+             obvious reading; "installed a minute ago, after this session
+             started" is the far more common one in practice, because the
+             installation list in the session is a snapshot taken at sign-in
+             and installing the App does not update it. Saying only the first
+             sends somebody off to re-install an App they already have. */
+          <div className="empty-actions">
+            <p className="note">
+              No installations are visible for this session. Either BuildDoctor
+              is not installed on any account you administer, or you installed
+              it <em>after</em> signing in - the list is read from GitHub once,
+              when you sign in, and it does not update on its own.
+            </p>
+            <RefreshAccess label="Just installed it? Refresh access" />
+          </div>
+        ) : (
+          <p className="note">
+            No diagnoses yet for your installations. BuildDoctor writes a row
+            the first time a workflow fails on a repository it is installed on.
+          </p>
+        ))}
 
       {rows.length > 0 && (
         <>

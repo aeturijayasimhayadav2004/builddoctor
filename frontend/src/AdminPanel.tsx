@@ -117,8 +117,27 @@ export default function AdminPanel() {
                     className={
                       row.is_allowed ? "badge badge-safe" : "badge badge-needs"
                     }
+                    /* The two kinds of yes do not behave the same, so they do
+                       not read the same. An automatic approval is conditional
+                       - the App withdraws it if a private repository turns up
+                       - and an owner's approval is permanent until the owner
+                       changes it. Showing only "approved" for both would hide
+                       which of these rows the App can still change by itself. */
+                    title={
+                      row.is_allowed
+                        ? row.approval_source === "auto_public"
+                          ? "Approved automatically: every repository is public. Withdrawn by BuildDoctor if a private one is added."
+                          : row.approval_source === "owner"
+                            ? "Approved by the App owner. Never withdrawn automatically."
+                            : "Approved before the reason was recorded. Never withdrawn automatically."
+                        : "Not approved. Builds from this installation are skipped."
+                    }
                   >
-                    {row.is_allowed ? "approved" : "pending"}
+                    {row.is_allowed
+                      ? row.approval_source === "auto_public"
+                        ? "auto · public"
+                        : "approved"
+                      : "pending"}
                   </span>
                   <button
                     type="button"
@@ -144,6 +163,16 @@ export default function AdminPanel() {
             and no restart. Revoking stops future diagnoses; it does not hide
             diagnoses already written, which stay visible to the people who
             could always see them.
+          </p>
+
+          <p className="foot">
+            Rows marked <span className="mono">auto · public</span> approved
+            themselves because every repository they cover is public, and
+            BuildDoctor withdraws that approval on its own if a private
+            repository is later added or one of them is made private. Anything
+            you approve here is marked as yours instead, and is never withdrawn
+            automatically - so approving a pending row is also how you make an
+            approval permanent.
           </p>
         </>
       )}

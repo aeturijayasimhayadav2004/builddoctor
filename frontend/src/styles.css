@@ -385,6 +385,22 @@ button:disabled {
   letter-spacing: 0;
 }
 
+/* The empty state, which since Phase 14 carries an action rather than
+   only an explanation. Column rather than a row: the sentence above the
+   button is two lines long on a narrow screen, and a button sitting beside
+   wrapped text reads as attached to the last line rather than to all of it. */
+.empty-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s3);
+  margin-top: var(--s3);
+}
+
+.empty-actions .note {
+  margin: 0;
+}
+
 .note {
   margin: var(--s2) 0 0;
   font-size: 12.5px;

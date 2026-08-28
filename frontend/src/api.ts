@@ -102,6 +102,17 @@ export interface MyInstallation {
   is_allowed: boolean;
 }
 
+/**
+ * How an installation came to be approved (Phase 14).
+ *
+ * "auto_public" - every repository it covers is public, so BuildDoctor
+ *   approved it with nobody in the loop. This approval is CONDITIONAL: if a
+ *   private repository is later added, the App withdraws it by itself.
+ * "owner" - a person pressed Approve. Never withdrawn automatically.
+ * null - not approved, or approved before this was recorded.
+ */
+export type ApprovalSource = "auto_public" | "owner" | null;
+
 /** Who the browser is signed in as. `GET /api/me` allows everybody. */
 export interface Me {
   signed_in: boolean;
@@ -134,6 +145,8 @@ export interface Me {
 /** One installation as the admin view sees it: everybody's, not just yours. */
 export interface AdminInstallation extends MyInstallation {
   created_at: string | null;
+  /** What approved it, and therefore whether the App can un-approve it. */
+  approval_source: ApprovalSource;
   /** Diagnoses written for this installation so far. */
   diagnoses: number;
 }
