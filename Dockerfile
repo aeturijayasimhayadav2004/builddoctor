@@ -1,3 +1,38 @@
+# STAGE 1 OF 2 - the dashboard bundle (Phase 12).
+#
+# The React app used to be a separate container serving a separate origin.
+# It is built here instead, and the Python image below serves the result,
+# because the dashboard's session is a COOKIE: a cookie set by the API's host
+# is not sent on a request from a different site, and the workaround for that
+# (SameSite=None, a third-party cookie) is the thing browsers are removing.
+# One origin makes the problem disappear rather than managing it.
+#
+# A separate stage, so node and node_modules - several hundred megabytes -
+# never appear in the final image. Only dist/ is copied across.
+FROM node:24-alpine AS dashboard
+
+WORKDIR /dashboard
+
+# Dependencies first, source second, so editing a component does not reinstall
+# the toolchain.
+COPY frontend/package.json frontend/package-lock.json ./
+
+# `npm install`, not `npm ci`: the lock file is generated on Windows and some
+# dependencies ship a different prebuilt binary per platform, which ci refuses
+# to resolve.
+RUN npm install
+
+COPY frontend/ ./
+
+# `npm run build` is `tsc --noEmit && vite build`, so a type error fails the
+# IMAGE BUILD. That is the point: the frontend's types are hand-written claims
+# about the API's shape, and the moment a route stops matching them the deploy
+# should stop too, rather than shipping a page that renders undefined.
+RUN npm run build
+
+
+# STAGE 2 OF 2 - the application.
+#
 # Slim keeps the image small; the full image adds ~700MB of build tools we
 # do not need, because psycopg[binary] ships prebuilt wheels.
 FROM python:3.12-slim
@@ -52,6 +87,11 @@ RUN HF_HUB_OFFLINE=0 python -c "from sentence_transformers import SentenceTransf
     && chmod -R a+rX /opt/models
 
 COPY . .
+
+# The built dashboard, from the node stage. main.py mounts this directory at
+# /dashboard if it exists, and explains what to run if it does not - so a
+# checkout without a build is a helpful message rather than a 404.
+COPY --from=dashboard /dashboard/dist ./frontend/dist
 
 # Run as a normal user. Nothing here needs root, and if the app is ever
 # compromised it should not own the filesystem.

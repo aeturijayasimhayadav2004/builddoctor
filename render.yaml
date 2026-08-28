@@ -111,6 +111,28 @@ services:
       - key: WEBHOOK_SECRET
         sync: false
 
+      # THE APP'S CLIENT SECRET (Phase 12). Pairs with the public client ID
+      # below to trade an authorization code for a user access token, which
+      # is how a person signs into the dashboard.
+      #
+      # Different from the private key above and worth keeping straight: the
+      # private key says "I am the App" and mints installation tokens that can
+      # write to repositories. This one only participates in sign-in. Both are
+      # secrets; only one of them can post a comment.
+      - key: GITHUB_APP_CLIENT_SECRET
+        sync: false
+
+      # Signs the dashboard's session cookie (Phase 12). Not a GitHub
+      # credential and not shared with anybody - a local random value.
+      #
+      # Anyone holding it can forge a session for any GitHub login, including
+      # one with more installations than their own, so it is exactly as
+      # sensitive as the tokens above even though it comes from nowhere.
+      # Changing it invalidates every session, which is the emergency
+      # sign-everybody-out lever.
+      - key: SESSION_SECRET
+        sync: false
+
       # ------------------------------------------------------------------
       # GitHub App identity. Not secret, so these live in the file.
       #
@@ -133,6 +155,20 @@ services:
       # Only used to build the install link on the landing page at /.
       - key: GITHUB_APP_SLUG
         value: builddoctor-ci
+
+      # WHERE THIS SERVICE IS, from a browser's point of view (Phase 12).
+      #
+      # The OAuth redirect_uri is built from this and must match the Callback
+      # URL in the App's settings BYTE FOR BYTE - wildcard matching is off, so
+      # a trailing slash or an http/https mismatch is a hard error from
+      # GitHub rather than a silent fallback.
+      #
+      # An environment variable rather than something read off the request's
+      # Host header, and that is a security choice: the Host header is
+      # attacker-controlled, and deriving the redirect from it would let a
+      # forged request send the authorization code somewhere else.
+      - key: PUBLIC_BASE_URL
+        value: https://builddoctor.onrender.com
 
       # WHO MAY USE BUILDDOCTOR, at install time.
       #
@@ -178,11 +214,17 @@ services:
       - key: MCP_ALLOWED_HOSTS
         value: localhost:10000,127.0.0.1:10000
 
-      # CORS origins for the dashboard's /api routes. Empty on purpose:
-      # Phase 9 deploys the backend only, so there is no browser origin to
-      # trust yet. main.py's default is the two localhost:5173 dev origins,
-      # which would be meaningless here.
+      # CORS origins for the dashboard's /api routes. STILL EMPTY, and now
+      # for a better reason than in Phase 9.
       #
-      # Phase 10 sets this to wherever the dashboard is actually served.
+      # Phase 12 serves the built dashboard from this same service under
+      # /dashboard, so the browser calling /api is already on this origin and
+      # CORS never enters the conversation. That is not a shortcut - it is
+      # what makes the session cookie work at all, since a cookie set here
+      # would not be sent from a dashboard hosted on another site.
+      #
+      # Adding an origin here would re-open the cross-site question and would
+      # also need the cookie's SameSite relaxed to None, which is the
+      # third-party-cookie behaviour browsers are removing. Leave it empty.
       - key: DASHBOARD_ORIGINS
         value: ""

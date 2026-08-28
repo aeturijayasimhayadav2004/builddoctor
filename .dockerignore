@@ -19,8 +19,13 @@ diagnoses.jsonl
 .gitignore
 README.md
 
-# The dashboard has its own image (frontend/Dockerfile) and its own build
-# context. Without this line the app image would swallow the frontend's
-# node_modules - tens of megabytes of Windows-built JavaScript that the
-# Python container has no use for.
-frontend/
+# The frontend SOURCE is now part of this build context (Phase 12): the app
+# image builds the dashboard bundle in a node stage and serves it itself, so
+# that the session cookie and the API share one origin.
+#
+# These two are still excluded, for the original reason. node_modules here is
+# tens of megabytes of Windows-built JavaScript that a Linux image cannot use,
+# and dist is whatever was last built on the host - copying either in would
+# make the image depend on the state of somebody's laptop.
+frontend/node_modules/
+frontend/dist/

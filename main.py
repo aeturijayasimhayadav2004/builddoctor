@@ -31,7 +31,9 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 # Reads .env into the environment. This has to run BEFORE db is imported:
 # db builds its engine at import time and reads DATABASE_URL right then.
@@ -47,6 +49,7 @@ import embeddings  # noqa: E402
 import github_client  # noqa: E402
 import graph  # noqa: E402
 import memory  # noqa: E402
+import user_auth  # noqa: E402
 from log_excerpt import extract_error_excerpt  # noqa: E402
 
 # Models return typographic characters (curly quotes, arrows) that the default
@@ -109,9 +112,75 @@ app.add_middleware(
         ).split(",")
         if origin.strip()
     ],
-    allow_methods=["GET", "OPTIONS"],
+    # Phase 12: the dashboard now sends a session cookie, and a browser will
+    # not attach one to a cross-origin fetch unless the server says it may.
+    # This is also why allow_origins can never become "*" - the two are
+    # mutually exclusive by specification, and a browser rejects the pair
+    # outright rather than quietly picking one.
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
 )
+
+
+# THE SESSION COOKIE (Phase 12).
+#
+# Added BEFORE the CORS middleware in this file, which means CORS ends up
+# OUTSIDE it: Starlette runs the most recently added middleware first. That
+# ordering matters for one specific case - a 401 from a signed-out fetch has
+# to come back carrying CORS headers, or the browser hides the status code
+# behind a generic network error and the dashboard cannot tell "not signed
+# in" apart from "the API is down".
+#
+# WHY A SIGNED COOKIE AND NOT A SESSION TABLE
+#
+# The alternative is a server-side store keyed by an opaque id. In memory,
+# that logs every user out on every cold start, and this instance cold-starts
+# constantly. In Postgres, it puts a table on the login path of a service
+# whose database is the slowest thing it owns, to hold data that is three
+# integers and a string.
+#
+# The cost is real and worth stating plainly: this cookie is SIGNED, not
+# ENCRYPTED. Anyone holding it can read what is inside. That is precisely why
+# what goes inside is a GitHub user id, a login, and a list of installation
+# ids - all things that person already knows about themselves - and never the
+# user access token GitHub issued during sign-in.
+#
+# max_age matches GitHub's own 8-hour user-token lifetime. Beyond that the
+# installation list in the cookie is too old to keep trusting, and the fix is
+# to ask GitHub again, which is what signing in does.
+SESSION_MAX_AGE_SECONDS = 8 * 60 * 60
+
+# Falling back to a random key would "work" - and would silently invalidate
+# every session on every restart, which on this instance means several times
+# a day. Failing loudly at boot is better than an app that logs people out
+# for no visible reason.
+_session_secret = os.environ.get("SESSION_SECRET", "").strip()
+if not _session_secret:
+    print(
+        "  WARNING: SESSION_SECRET is not set - dashboard sign-in is "
+        "DISABLED. Generate one with: python -c \"import secrets; "
+        "print(secrets.token_hex(32))\"",
+        flush=True,
+    )
+else:
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=_session_secret,
+        session_cookie="builddoctor_session",
+        max_age=SESSION_MAX_AGE_SECONDS,
+        same_site="lax",
+        # Lax, not Strict. The OAuth callback arrives as a top-level
+        # navigation FROM github.com, and Strict would refuse to send the
+        # cookie on it - so the state parameter written just before the
+        # redirect would be invisible on the way back, and every single
+        # sign-in would fail its own CSRF check.
+        #
+        # Secure only when actually served over https. Hard-coding it true
+        # would mean the cookie is silently dropped on http://localhost and
+        # local development could never log in at all.
+        https_only=user_auth.public_base_url().startswith("https://"),
+    )
 
 PROJECT_DIR = Path(__file__).parent
 LOGS_DIR = PROJECT_DIR / "logs"
@@ -191,6 +260,8 @@ async def landing():
   </p>
   {install}
   <footer>
+    <a class="plain" href="/dashboard">Dashboard</a>
+    &nbsp;·&nbsp;
     <a class="plain" href="https://github.com/aeturijayasimhayadav2004/builddoctor">Source</a>
     &nbsp;·&nbsp;
     <a class="plain" href="/health">Status</a>
@@ -198,6 +269,176 @@ async def landing():
 </main>
 </body>
 </html>"""
+
+
+# --------------------------------------------------------------------------
+# SIGNING IN (Phase 12)
+#
+# The same GitHub App that posts the comments also identifies the people who
+# look at the results. There is no second OAuth App and no password anywhere
+# in this system - see the module docstring in user_auth.py.
+#
+# Three routes, and the whole flow is:
+#
+#   /login           mint state + PKCE, stash them in the session, redirect
+#   /auth/callback   check state, trade the code, ask GitHub who this is,
+#                    ask GitHub what they administer, write the session,
+#                    throw the token away
+#   /logout          drop the session
+# --------------------------------------------------------------------------
+
+
+def _auth_message(title: str, body: str, status: int) -> HTMLResponse:
+    """A plain page for the handful of ways signing in can fail.
+
+    Deliberately not a JSON error: everything that reaches these routes is a
+    browser following a redirect, and a human staring at a raw error object
+    learns less than they do from one sentence and a link.
+    """
+    return HTMLResponse(
+        f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BuildDoctor - {title}</title>
+<style>
+  :root {{ color-scheme: dark; }}
+  body {{ margin:0; min-height:100vh; display:grid; place-items:center;
+         background:#0f1115; color:#e6e8ee; padding:2rem;
+         font:16px/1.6 ui-sans-serif, system-ui, -apple-system, sans-serif; }}
+  main {{ max-width:34rem; }}
+  h1 {{ font-size:1.4rem; margin:0 0 .5rem; }}
+  p {{ color:#a9b0c0; }}
+  a {{ color:#7aa7e8; }}
+</style></head>
+<body><main>
+  <h1>{title}</h1>
+  <p>{body}</p>
+  <p><a href="/login">Try signing in again</a> &middot; <a href="/">Home</a></p>
+</main></body></html>""",
+        status_code=status,
+    )
+
+
+@app.get("/login")
+async def login(request: Request):
+    """Start the GitHub sign-in flow.
+
+    The state and the PKCE verifier go into the session cookie rather than
+    into a server-side dictionary, for the same reason the session itself
+    does: this instance restarts often, and a login that was in flight across
+    a restart would fail with a CSRF error that has nothing to do with CSRF.
+    """
+    if not user_auth.is_configured() or not _session_secret:
+        return _auth_message(
+            "Sign-in is not configured",
+            "This deployment is missing GITHUB_APP_CLIENT_SECRET or "
+            "SESSION_SECRET, so it cannot start a GitHub sign-in.",
+            503,
+        )
+
+    state = user_auth.new_state()
+    verifier, challenge = user_auth.new_pkce_pair()
+    request.session["oauth"] = {"state": state, "verifier": verifier}
+
+    return RedirectResponse(
+        user_auth.authorize_url(state=state, code_challenge=challenge),
+        status_code=302,
+    )
+
+
+@app.get("/auth/callback")
+async def auth_callback(request: Request):
+    """Where GitHub sends the browser back, carrying a one-time code."""
+    params = request.query_params
+
+    # Popped FIRST, before anything is validated. A code can only be redeemed
+    # once, and a state can only be answered once; leaving either in the
+    # session after a failed attempt would let a second request retry it.
+    pending = request.session.pop("oauth", None)
+
+    if params.get("error"):
+        # The user pressed Cancel, or the App was suspended. Not an error in
+        # this code, so it does not read like one.
+        return _auth_message(
+            "Sign-in was cancelled",
+            f"GitHub reported: {params.get('error_description') or params['error']}",
+            400,
+        )
+
+    code = params.get("code")
+    state = params.get("state")
+    if not code or not state:
+        return _auth_message(
+            "That link is incomplete",
+            "GitHub did not send a code and a state, so there is nothing to "
+            "verify. Start again from the sign-in link.",
+            400,
+        )
+
+    if not isinstance(pending, dict) or not hmac.compare_digest(
+        str(pending.get("state", "")), state
+    ):
+        # THE CSRF CHECK. Without it, a crafted /auth/callback link carrying
+        # somebody else's code silently signs the victim into the attacker's
+        # account. compare_digest rather than == so a mismatch does not leak
+        # how many characters were right.
+        return _auth_message(
+            "That sign-in did not start here",
+            "The security token did not match. This happens if the link was "
+            "opened out of order, if it was reused, or if the session cookie "
+            "expired while GitHub was being asked. Signing in again fixes it.",
+            400,
+        )
+
+    try:
+        token = await user_auth.exchange_code(
+            code=code, code_verifier=str(pending.get("verifier", ""))
+        )
+        user = await user_auth.fetch_user(token)
+        installations = await user_auth.fetch_installations(token)
+        owner = await user_auth.app_owner()
+    except user_auth.UserAuthError as exc:
+        print(f"  [auth] sign-in failed: {exc}", flush=True)
+        return _auth_message("Sign-in failed", str(exc), 502)
+    finally:
+        # Not security theatre, but not a guarantee either: it drops this
+        # frame's reference so the token is not sitting in a local when a
+        # later traceback is rendered. The real protection is that it was
+        # never written anywhere.
+        token = None
+
+    is_app_owner = bool(owner and owner["id"] == user["id"])
+
+    dashboard.sign_in(
+        request,
+        user=user,
+        installations=installations,
+        is_app_owner=is_app_owner,
+    )
+
+    print(
+        f"  [auth] signed in {user['login']} (id {user['id']}) - "
+        f"{len(installations)} installation(s), app_owner={is_app_owner}",
+        flush=True,
+    )
+
+    return RedirectResponse("/dashboard", status_code=302)
+
+
+@app.post("/logout")
+async def logout(request: Request):
+    """Drop the session.
+
+    POST rather than GET on purpose. A GET would be reachable from an
+    <img src="/logout"> on any page on the internet, and while being logged
+    out is a small harm, it is a pointless one to leave available.
+
+    Nothing is revoked at GitHub here. The authorization granted to the App
+    lives in the user's own GitHub settings and is theirs to remove; this
+    only forgets it locally.
+    """
+    dashboard.sign_out(request)
+    return {"signed_in": False}
 
 
 def signature_is_valid(raw_body: bytes, signature_header: str) -> bool:
@@ -727,3 +968,50 @@ async def _investigate(payload: dict, installation_id: int) -> None:
         print(f"  ERROR writing to the database: {exc}")
 
     print(RULE + "\n", flush=True)
+
+
+# --------------------------------------------------------------------------
+# THE DASHBOARD ITSELF (Phase 12)
+#
+# Serving the built React app from this same service, rather than from a
+# second host, is a security decision before it is a convenience one.
+#
+# The session is a cookie. A cookie set by builddoctor.onrender.com is not
+# sent on a request originating from some-dashboard.example.com, because
+# those are different SITES and SameSite=Lax exists precisely to stop that.
+# Working around it means SameSite=None, which means a third-party cookie,
+# which browsers are in the middle of removing. Same origin sidesteps the
+# entire argument: one host, one cookie, no CORS on the path that matters.
+#
+# It also means there is exactly one URL to sign in to and exactly one thing
+# to deploy, on a free plan that only has room for one service anyway.
+#
+# html=True makes StaticFiles serve index.html for a directory request, so
+# /dashboard works as well as /dashboard/index.html.
+# --------------------------------------------------------------------------
+
+DASHBOARD_DIST = PROJECT_DIR / "frontend" / "dist"
+
+if DASHBOARD_DIST.is_dir():
+    app.mount(
+        "/dashboard",
+        StaticFiles(directory=str(DASHBOARD_DIST), html=True),
+        name="dashboard",
+    )
+else:
+    # Not an error. The Docker image builds the bundle, but somebody running
+    # `uvicorn main:app` straight from a checkout has no dist/ and should be
+    # told what to run rather than shown a 404 with no explanation.
+    @app.get("/dashboard", response_class=HTMLResponse)
+    async def dashboard_not_built():
+        return HTMLResponse(
+            "<!doctype html><meta charset=utf-8>"
+            "<title>BuildDoctor - dashboard not built</title>"
+            "<body style='font:16px/1.6 system-ui;background:#0f1115;"
+            "color:#e6e8ee;padding:2rem'>"
+            "<h1>The dashboard bundle is not here</h1>"
+            "<p>frontend/dist does not exist in this checkout. Build it with "
+            "<code>npm --prefix frontend run build</code>, or use the Vite dev "
+            "server on port 5173.</p></body>",
+            status_code=503,
+        )

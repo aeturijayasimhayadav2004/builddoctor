@@ -26,7 +26,9 @@ from sqlalchemy import (
     String,
     Text,
     create_engine,
+    false,
     func,
+    or_,
     select,
     text,
 )
@@ -664,8 +666,74 @@ def _percent(part: int, whole: int) -> float:
     return round(100.0 * part / whole, 1)
 
 
-def dashboard_stats() -> dict:
-    """Counts for the stat cards. One row of aggregates, plus the lanes."""
+# --------------------------------------------------------------------------
+# WHO MAY SEE WHICH ROWS (Phase 12)
+# --------------------------------------------------------------------------
+
+
+def existing_installation_ids(candidates: list[int]) -> list[int]:
+    """Of these installation ids, the ones this database still knows about.
+
+    The dashboard's session cookie carries a snapshot of what GitHub said at
+    login, and a snapshot goes stale: somebody can uninstall the App an hour
+    into an eight-hour session. Intersecting against this table closes that
+    window, because the uninstall webhook DELETES the row (see
+    remove_installation), so a departed installation stops matching on the
+    very next request.
+
+    The intersection can only ever shrink the list. It is a second opinion
+    that removes access, never one that grants it.
+    """
+    if not candidates:
+        return []
+    with Session() as session:
+        rows = session.scalars(
+            select(Installation.installation_id).where(
+                Installation.installation_id.in_(list(candidates))
+            )
+        ).all()
+    return [int(value) for value in rows]
+
+
+def visibility_clause(installation_ids: list[int], *, include_legacy: bool):
+    """The WHERE that decides which diagnoses a caller is allowed to see.
+
+    FAILS CLOSED, AND THAT IS THE WHOLE DESIGN. An empty installation list
+    with no legacy access produces `false()` - a filter that matches nothing
+    - rather than no filter at all. The alternative shape, where an empty
+    list means "do not filter", turns one forgotten argument into a full
+    data dump, which is precisely the hole this phase is closing.
+
+    include_legacy covers the diagnoses written before Phase 11 existed,
+    whose installation_id is permanently NULL. NULL cannot be matched by
+    IN (...) - in SQL, NULL is not equal to anything, including itself - so
+    those rows need their own IS NULL branch and could never leak in by
+    accident.
+    """
+    clauses = []
+    if installation_ids:
+        clauses.append(Diagnosis.installation_id.in_(list(installation_ids)))
+    if include_legacy:
+        clauses.append(Diagnosis.installation_id.is_(None))
+    if not clauses:
+        return false()
+    return or_(*clauses)
+
+
+def dashboard_stats(
+    installation_ids: list[int], *, include_legacy: bool
+) -> dict:
+    """Counts for the stat cards, for one caller's installations only.
+
+    BOTH ARGUMENTS ARE REQUIRED, with no defaults, deliberately. Before
+    Phase 12 this function took nothing and counted the whole table. Giving
+    the new parameters defaults would mean an old call site still compiles
+    and still returns everybody's data; leaving them required means a
+    forgotten caller is a TypeError at import time instead of a leak in
+    production.
+    """
+    visible = visibility_clause(installation_ids, include_legacy=include_legacy)
+
     with Session() as session:
         # count(*) FILTER (WHERE ...) - one pass over the table producing
         # every counter at once, instead of four separate queries that
@@ -680,12 +748,14 @@ def dashboard_stats() -> dict:
                 .label("searchable"),
                 func.count(func.distinct(Diagnosis.repo)).label("repos"),
                 func.max(Diagnosis.created_at).label("latest_at"),
-            )
+            ).where(visible)
         ).one()
 
         by_lane = dict(
             session.execute(
-                select(Diagnosis.lane, func.count()).group_by(Diagnosis.lane)
+                select(Diagnosis.lane, func.count())
+                .where(visible)
+                .group_by(Diagnosis.lane)
             ).all()
         )
 
@@ -749,8 +819,17 @@ DASHBOARD_DEFAULT_LIMIT = 100
 DASHBOARD_MAX_LIMIT = 500
 
 
-def list_diagnoses(limit: int = DASHBOARD_DEFAULT_LIMIT) -> list[tuple[Diagnosis, bool]]:
+def list_diagnoses(
+    installation_ids: list[int],
+    *,
+    include_legacy: bool,
+    limit: int = DASHBOARD_DEFAULT_LIMIT,
+) -> list[tuple[Diagnosis, bool]]:
     """Newest diagnoses first, each paired with "does it have an embedding".
+
+    Scoped exactly like dashboard_stats, by the same clause, so the number on
+    a stat card and the number of rows under it can never disagree. The two
+    scoping arguments are required for the same reason they are there.
 
     created_at DESC, then id DESC: two diagnoses of the same run can land
     in the same second, and without the tiebreak their order on screen
@@ -766,6 +845,11 @@ def list_diagnoses(limit: int = DASHBOARD_DEFAULT_LIMIT) -> list[tuple[Diagnosis
         stmt = (
             select(Diagnosis, Diagnosis.embedding.isnot(None).label("embedded"))
             .options(defer(Diagnosis.embedding))
+            .where(
+                visibility_clause(
+                    installation_ids, include_legacy=include_legacy
+                )
+            )
             .order_by(Diagnosis.created_at.desc(), Diagnosis.id.desc())
             .limit(limit)
         )

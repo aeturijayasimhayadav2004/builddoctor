@@ -41,3 +41,9 @@ pgvector>=0.2
 # access token (Phase 11). The [crypto] extra pulls in `cryptography`, which
 # is what actually does the RSA signing - PyJWT alone cannot do RS256.
 pyjwt[crypto]>=2.8
+
+# Signs the dashboard's session cookie (Phase 12). Starlette's
+# SessionMiddleware imports this lazily and raises AssertionError at startup
+# without it, so it is pinned explicitly rather than left to arrive as
+# somebody else's transitive dependency.
+itsdangerous>=2.1

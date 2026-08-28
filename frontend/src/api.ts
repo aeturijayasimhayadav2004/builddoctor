@@ -87,28 +87,67 @@ export interface DiagnosesResponse {
   diagnoses: Diagnosis[];
 }
 
+/** Who the browser is signed in as. `GET /api/me` allows everybody. */
+export interface Me {
+  signed_in: boolean;
+  login?: string;
+  avatar_url?: string | null;
+  /** Account logins of the installations GitHub says this user administers. */
+  accounts?: string[];
+  /** What the session cookie claims, recorded at sign-in. */
+  installations?: number;
+  /** How many of those still exist in the database right now. */
+  installations_visible?: number;
+  /** True only for the account that registered the App itself. */
+  is_app_owner?: boolean;
+  /** Whether the pre-Phase-11 rows with a null installation_id are included. */
+  includes_legacy_rows?: boolean;
+}
+
 /**
  * Where the API lives, from the point of view of the BROWSER.
  *
- * This is the one thing that is easy to get wrong once the dashboard runs
- * in a container. Inside compose, the app is reachable as "app" - but this
- * code does not run inside compose, it runs in a browser on the host, and
- * a browser has never heard of a compose service name. So it must be a URL
- * the host can open: http://localhost:8000.
+ * EMPTY, meaning "the origin this page came from" - which is the whole point
+ * since Phase 12. The session is a cookie, and a cookie is scoped to a site;
+ * calling the API on a different host would mean the browser refusing to
+ * attach it. In production FastAPI serves this bundle itself under
+ * /dashboard, and in development Vite proxies /api through to it, so the
+ * answer is the same in both places: same origin, no host to configure.
  *
- * Vite exposes variables that start with VITE_ and substitutes them into
- * the bundle when the dev server starts. Changing it means restarting the
- * container, not just reloading the page.
+ * VITE_API_BASE is still honoured for the one case it is actually good for -
+ * pointing a local dev build at some other deployment - and anyone who sets
+ * it takes on the cross-site cookie problem knowingly.
  */
-export const API_BASE: string =
-  import.meta.env.VITE_API_BASE ?? "http://localhost:8000";
+export const API_BASE: string = import.meta.env.VITE_API_BASE ?? "";
+
+/** Thrown when the API says 401. Distinct so the UI can react to it. */
+export class NotSignedInError extends Error {
+  constructor() {
+    super("Not signed in");
+    this.name = "NotSignedInError";
+  }
+}
 
 async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`);
+  // credentials: "include" is the line that makes any of this work. fetch
+  // does NOT send cookies by default on a cross-origin request, and omitting
+  // this produces the most confusing possible symptom: a 401 from an API you
+  // are definitely logged into, because the cookie was never sent.
+  const response = await fetch(`${API_BASE}${path}`, {
+    credentials: "include",
+  });
+
+  if (response.status === 401) {
+    throw new NotSignedInError();
+  }
   if (!response.ok) {
     throw new Error(`${path} returned ${response.status} ${response.statusText}`);
   }
   return (await response.json()) as T;
+}
+
+export function fetchMe(): Promise<Me> {
+  return getJson<Me>("/api/me");
 }
 
 export function fetchStats(): Promise<Stats> {
@@ -117,4 +156,15 @@ export function fetchStats(): Promise<Stats> {
 
 export function fetchDiagnoses(limit = 100): Promise<DiagnosesResponse> {
   return getJson<DiagnosesResponse>(`/api/diagnoses?limit=${limit}`);
+}
+
+/** Where to send the browser to start GitHub sign-in. A full page navigation,
+ *  not a fetch: the flow leaves this origin for github.com and comes back. */
+export const LOGIN_URL = `${API_BASE}/login`;
+
+export async function logout(): Promise<void> {
+  await fetch(`${API_BASE}/logout`, {
+    method: "POST",
+    credentials: "include",
+  });
 }
