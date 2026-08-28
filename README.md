@@ -928,9 +928,11 @@ secrets. Public identifiers from the App's settings page, committed to
 say *"Use of the client ID is recommended"*, and the App's own settings page
 repeats the advice. The App ID is kept as a fallback.
 
-**`ALLOWED_ACCOUNTS`** - comma-separated GitHub logins allowed to use
-BuildDoctor. Seeds the decision only; see [the allowlist](#the-allowlist-and-why-it-lives-in-postgres).
-Empty means nobody, and there is no wildcard on purpose.
+**`ALLOWED_ACCOUNTS`** - **removed in Phase 13.** Nothing reads it. It used
+to seed `is_allowed` when an installation was first recorded; approval is now
+a person pressing a button. Nothing replaced it - see
+[approval](#approval-who-decides-and-who-is-decided-about). Delete the line
+from any older `.env`.
 
 **`GITHUB_APP_CLIENT_SECRET`** - a secret. Generated under **Client
 secrets** on the App's General settings page; GitHub shows it exactly once.
@@ -1224,11 +1226,12 @@ integer that grants nothing without the private key; an installation token is
 a live credential. Under `docker compose` these genuinely are two containers,
 so this also keeps the token from existing in two processes at once.
 
-### The allowlist, and why it lives in Postgres
+### The gate, and why it lives in Postgres
 
-`ALLOWED_ACCOUNTS` seeds `is_allowed` when an installation is **first
-recorded**, and is never consulted again. The `installations.is_allowed`
-column is what the gate reads on every webhook.
+The `installations.is_allowed` column is what the gate reads on every webhook,
+and it is the only thing it reads. Phase 11 shipped an `ALLOWED_ACCOUNTS`
+environment variable alongside it, to seed the column at install time; Phase
+13 deleted the variable and kept the column.
 
 An environment variable can answer *"should this account be approved by
 default"*, once. It cannot answer *"is this installation allowed right now"*:
@@ -1236,9 +1239,9 @@ default"*, once. It cannot answer *"is this installation allowed right now"*:
 - **Changing it needs a redeploy.** On Render's free tier a redeploy is a cold
   start, so revoking a misbehaving installation would take the service down
   for a minute - the exact failure Phase 10 spent its time removing.
-- **Nothing in the product could ever grant or revoke access.** Phase 13
-  opening this up means an approval flow, and an approval flow needs somewhere
-  to write "yes" that is not a source file.
+- **Nothing in the product could ever grant or revoke access.** An approval
+  flow needs somewhere to write "yes" that is not a source file. This column
+  is that somewhere.
 - **It has no memory.** A row records when an installation appeared, who owns
   it, and whether it was ever allowed, so a skipped delivery can be explained
   afterwards.
@@ -1270,6 +1273,79 @@ zero comments. Crucially, the App's own delivery log shows that delivery
 from "the webhook never came". Flipping the column back produced a normal
 diagnosis on the next build, with no redeploy and no restart.
 
+### Approval: who decides, and who is decided about
+
+Phase 13's whole job was separating two questions that Phase 11 had running
+through one environment variable:
+
+| Question | Answered by | Changing it costs |
+| -------- | ----------- | ----------------- |
+| Who may **approve** an installation | `GET /app` - the account that registered BuildDoctor | a transfer of the App on GitHub |
+| Which installations **are** approved | `installations.is_allowed` in Postgres | one row write, no redeploy |
+
+**Every new installation lands closed.** There is no configuration that
+pre-approves anybody, including the owner's own account: the seeding variable
+was deleted rather than renamed, because a login sitting in a config file goes
+stale the moment the account is renamed, and it has to be kept identical in
+`.env` and in the Render dashboard - two places that can disagree without
+anyone noticing.
+
+**Who may approve is not configured at all.** It is the `owner` of `GET /app`,
+compared against the signed-in user's GitHub id - the same value that already
+gates the legacy rows. This is the rule the rest of the project follows: the
+pipeline re-reads `run_attempt` from the API rather than counting attempts
+itself, and sign-in reads `GET /user/installations` rather than inferring
+administrator status. Ask the system that owns the fact. An `ADMIN_ACCOUNTS`
+variable would have recreated the drift problem in a new place.
+
+The one limitation, stated rather than designed around: `GET /app` returns an
+*organisation* as owner if the App is ever transferred to one, and then no
+individual user id would match and nobody could approve anything through the
+view. That needs a deliberate manual transfer on GitHub, and the recovery is
+an `UPDATE` against the table.
+
+#### The routes
+
+| Route | Auth | Does |
+| ----- | ---- | ---- |
+| `GET /api/admin/installations` | **403 unless App owner** | every installation, pending first, with its diagnosis count |
+| `POST /api/admin/installations/{id}/allowed` | **403 unless App owner** | `{"allowed": true \| false}` - flips the column |
+
+They live in [`admin.py`](admin.py), not in `dashboard.py`, because
+`dashboard.py` opens by promising that nothing in it writes and that promise
+is worth keeping true.
+
+There is **no CSRF token**, and that is deliberate rather than forgotten. The
+session cookie is `SameSite=Lax`, so a browser will not attach it to a POST
+started by another site; such a request arrives with no session at all and is
+rejected as unauthenticated before reaching the handler.
+
+Approve has a matching **revoke**, using the same column in the other
+direction. An approve button with no way back would make the realistic
+mistake - approving the wrong row - recoverable only from a psql session.
+
+#### What an unapproved installer sees
+
+Before Phase 13 the answer was: nothing, indistinguishable from working. The
+delivery succeeded, GitHub reported it as delivered, the skip reason went to a
+console nobody outside this project can read, and the dashboard showed an
+empty table. Every visible signal said "installed fine, no failures yet".
+
+Now `GET /api/me` reports each of the viewer's installations with its
+`is_allowed`, and the dashboard renders a **waiting for approval** state
+instead of an empty one. The three reasons a table can be empty - pending
+approval, no installations at all, approved but nothing has failed yet - now
+read differently from each other.
+
+There is deliberately **no "request approval" button**. There is no
+notification channel, no inbox and no email configured, so it would either lie
+or write a row nobody reads. Installing the App *is* the request: it puts a
+row at the top of the admin list.
+
+Note that approval and visibility stay separate, as they were in Phase 12.
+Revoking `is_allowed` stops BuildDoctor working for an installation; it does
+not confiscate diagnoses already written about that account's repositories.
+
 ### Installation lifecycle
 
 The `installation` event is delivered to every GitHub App and cannot be
@@ -1277,15 +1353,16 @@ unsubscribed. All five actions are handled rather than assuming `created`:
 
 | Action | Effect |
 | ------ | ------ |
-| `created` | insert a row; `is_allowed` set from `ALLOWED_ACCOUNTS` |
+| `created` | insert a row with `is_allowed = false`, always |
 | `deleted` | delete the row, and drop any cached token |
 | `new_permissions_accepted` | refresh the descriptive fields only |
 | `suspend` / `unsuspend` | refresh the descriptive fields only |
 
-`is_allowed` is set **only on creation**. An existing row keeps whatever it
-holds, because that value may have been set by hand - which is exactly what
-Phase 13's approval flow will do. A later event overwriting it from the
-environment variable would silently undo a deliberate revocation.
+`is_allowed` is set **only on creation, and only ever to false**. An existing
+row keeps whatever the approval flow put there. GitHub re-sends this event on
+permission changes and on suspend/unsuspend, so writing the column on an
+update would silently undo a deliberate approval - or worse, a deliberate
+revocation.
 
 Suspension does not remove the row. A suspended installation still exists and
 keeps its approval; treating suspension as removal would revoke something an
@@ -1448,17 +1525,45 @@ queued jobs may be dropped". A late or skipped ping can still let the idle
 timer reach 15 minutes. Scheduled workflows also only run on the default
 branch, so this file does nothing until it is on `master`.
 
-### OPEN DEFECT: the GitHub schedule does not run, and two pingers now
+### SETTLED: the GitHub schedule does not work; an external pinger does
 
-Phase 11 measured this rather than trusting it. Phase 12 measured it again
-and corrected the finding: it is not that the schedule has *never* fired, it
-is that it fires at roughly **2% of its schedule**, which is worse than a
-clean failure because it looks alive.
+Measured across three phases rather than trusted, and Phase 13 closed it.
 
 | When measured | Cron | Due | Actually ran |
 | ------------- | ---- | --- | ------------ |
 | Phase 11, first 7h | `*/10 * * * *` | ~42 | 0 |
 | Phase 12, first 19h | `*/10 * * * *` | ~114 | 2 |
+| Phase 13, after the offset | `3,13,23,33,43,53` | 9 | **0** |
+
+The last row is the one that ends the argument. Moving off the ten-minute
+boundary was a hypothesis - GitHub's own docs blame congestion at the start of
+every hour - and it is now tested and dead. `keep-warm.yml` fires at roughly
+**2% of its schedule**, which is worse than a clean failure because it looks
+alive.
+
+**The external pinger, by contrast, is carrying the service.** The measurement
+is an untouched control window rather than a claim:
+
+```
+last time anything in this project touched /health   07:22Z - 31 min earlier
+GitHub Actions runs during that window               0
+Render free-tier idle timeout                        15 min
+a cold start on this service                         112 s
+
+07:22:27Z   GET /health -> 200 in 1.20s   {"status":"ok"}
+```
+
+It never slept, and nothing on GitHub's side and nothing local woke it. The
+only thing left in that window is cron-job.org's `:00 / :10 / :20` pings.
+
+**The verdict: cron-job.org is the keep-warm. `keep-warm.yml` is not.** The
+workflow stays for two narrow reasons - it is free on a public repo, and
+`workflow_dispatch` makes it a manual "wake it now" button - and its green
+checkmarks must not be read as evidence that the schedule recovered. Deleting
+it outright was the alternative, and it was rejected because it would leave a
+single free third-party service, one with a documented auto-disable-on-repeated-failures
+behaviour, as the only thing between this deployment and 112-second cold
+starts.
 
 Both runs that did land started about **8 minutes into their slot**
 (`20:48:17`, `04:58:32`), which is what a congested queue looks like rather
@@ -1529,11 +1634,12 @@ guarantee on top of.
 
 **The tradeoff of running both rather than picking one.** Two pingers cost
 nothing - `/health` is a database-free 200 - and they fail for uncorrelated
-reasons, which is the entire point. The real cost is interpretive: with two
-of them, "the service is warm" no longer tells you the Actions schedule
-recovered. So the workflow stays as an *instrument to read*, and cron-job.org
-is the thing actually keeping the lights on. A redundant pinger plus a
-truthful open defect beats one pinger and a false sense the defect is closed.
+reasons, which is the entire point. The real cost is interpretive, and Phase
+13 paid it: because both were running, "the service is warm" could not by
+itself credit either one, and settling the question needed a deliberate
+31-minute window with nothing in this project touching `/health`. Redundancy
+makes a system harder to measure. That is a real price, and it was worth
+paying here only because the measurement was possible at all.
 
 **Expect red entries in cron-job.org's history.** Its request timeout is 30
 seconds and a cold start takes ~112, so the first ping after a sleep records
@@ -1891,6 +1997,39 @@ Nothing else in the codebase is provider-specific.
 Cost control comes mostly from the excerpt: a raw log is trimmed by roughly
 90% before it is sent, which cuts both the bill and the chance of the model
 latching onto unrelated warnings.
+
+## Deliberately not done
+
+Kept here rather than in a commit message, because the honest state of a
+project includes what it has decided not to build yet. Each of these is a
+choice with a reason, not an oversight.
+
+**Session and refresh-token policy.** A user access token lasts 8 hours and
+comes with a 6-month refresh token. The refresh token is discarded along with
+the access token at the end of the OAuth callback, so an expired session means
+signing in again rather than a silent renewal. Storing a refresh token would
+mean keeping a live GitHub credential in a signed-but-not-encrypted cookie, or
+in the same Postgres the dashboard reads - both worse than a sign-in prompt
+twice a day.
+
+**Pagination.** `GET /api/diagnoses?limit=` is a ceiling, not pagination, and
+`db.py` says so where the constant is defined. At a few dozen rows a `LIMIT`
+is honest; at a few thousand it silently truncates. The trigger to fix it is
+the row count, not the calendar.
+
+**Amber write access.** The `safe_auto_fix` lane still only ever re-runs a job.
+It does not push a commit, open a pull request, or edit a file, and the App's
+permissions do not allow it to. Widening that is a permissions change on every
+existing installation, which GitHub makes every installer accept by hand - so
+it needs a reason better than "the lane is named for it".
+
+**A second approver.** Approval is limited to the one account that registered
+the App. There is no delegation, no team, and no per-organisation admin.
+One approver is correct while there is one operator.
+
+**Notifying an installer when they are approved.** They find out by loading
+the dashboard, or by their next build being diagnosed. Email or a GitHub
+notification would need a channel this project does not have.
 
 ## Note on version control
 
