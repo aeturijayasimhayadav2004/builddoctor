@@ -40,10 +40,26 @@ body{
   line-height:1.68;
   margin:0;
   counter-reset:sec;
+
+  /* The PDF is printed with zero page margins (see render_pdf.py) because
+     Chrome's own margin boxes paint background only inside the content
+     box, leaving an unpainted white frame around a dark page. Padding
+     here recreates the margin instead - but ordinary padding on a box
+     that spans many pages only applies at the very start and very end of
+     the whole flow, not at each page break in between. box-decoration-
+     break: clone is what tells Chromium to re-apply this padding (and
+     the background above) at every page the body is fragmented across,
+     which is what makes every page carry the same margin. */
+  padding:20mm 22mm;
+  box-decoration-break:clone;
+  -webkit-box-decoration-break:clone;
 }
 
 /* ---------- title page ---------- */
-.titlepage{ height:243mm; display:flex; flex-direction:column; page-break-after:always; }
+/* A4 is 297mm tall; body padding above takes 20mm off each of top and
+   bottom, leaving 257mm of content height per page. 245mm keeps a 12mm
+   buffer so a rounding difference cannot push this onto a second page. */
+.titlepage{ height:245mm; display:flex; flex-direction:column; page-break-after:always; }
 .titlepage .top{ flex:1; }
 .titlepage .rule-top{ border-top:2.5px solid var(--ink); margin-bottom:5mm; }
 .titlepage h1{ font-size:34pt; font-weight:700; line-height:1.1; margin:0 0 4mm; letter-spacing:-.01em; }
