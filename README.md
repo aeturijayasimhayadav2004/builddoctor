@@ -411,20 +411,26 @@ all 13 rows this way.
 
 ## The dashboard
 
-A web page listing every diagnosis BuildDoctor has ever made, so the project
-can be shown to someone without waiting for a build to break on cue.
+A web page listing the diagnoses BuildDoctor has made **for the
+installations you administer**, so the project can be shown to someone
+without waiting for a build to break on cue.
+
+In production it is at **<https://builddoctor.onrender.com/dashboard>**,
+served by the same service that receives the webhooks. Locally:
 
 ```powershell
 docker compose up --build
 ```
 
-Then open **<http://localhost:5173>**. The API it reads is on port 8000; both
-have to be up.
+Then open **<http://localhost:5173/dashboard/>**. The dev server proxies
+`/api`, `/login` and `/auth` through to the app on port 8000; both have to be
+up.
 
 | Piece | Where | Role |
 | ----- | ----- | ---- |
-| `dashboard.py` | in the app | two read-only routes under `/api` |
-| `frontend/` | its own container | React + TypeScript, served by Vite |
+| `dashboard.py` | in the app | the read routes under `/api`, and who may read them |
+| `user_auth.py` | in the app | GitHub sign-in - see *Authentication and access* |
+| `frontend/` | built into the app image | React + TypeScript, served at `/dashboard` |
 
 ### Why the routes live in the existing app
 
@@ -439,15 +445,38 @@ stopped, because a capability only earns a new surface when something actually
 needs it to be separate. Reading rows the app already owns does not qualify.
 
 Everything in `dashboard.py` reads. There is no route there that writes,
-deletes, re-runs or posts, which is what makes it safe to leave open to a
-browser with nothing in front of it.
+deletes, re-runs or posts.
 
-### The two routes
+**Phase 7 said that made it safe to leave open. That was wrong, and Phase 12
+fixes it.** Read-only means these routes cannot damage anything; it says
+nothing about disclosure, and disclosure is the actual risk. A diagnosis
+carries a repository name, a workflow name, the files a commit touched, and a
+raw excerpt of a build log. Build logs leak - internal hostnames, registry
+URLs, occasionally a filesystem path with somebody's name in it. Handing that
+to an unauthenticated stranger is a real harm even though no button there
+writes a row.
 
-| Route | Returns |
-| ----- | ------- |
-| `GET /api/stats` | totals, the lane breakdown as percentages, and the memory hit rate |
-| `GET /api/diagnoses?limit=100` | every diagnosis, newest first, flattened for the UI |
+Every data route now requires a signed-in GitHub user.
+
+### The routes
+
+| Route | Auth | Returns |
+| ----- | ---- | ------- |
+| `GET /api/me` | open | `{"signed_in": false}`, or who you are and what you can see |
+| `GET /api/stats` | **401 without a session** | totals, lane breakdown, memory hit rate - for your installations |
+| `GET /api/diagnoses?limit=100` | **401 without a session** | your diagnoses, newest first, flattened for the UI |
+| `GET /login` | open | redirects to GitHub to start sign-in |
+| `GET /auth/callback` | open | where GitHub sends the browser back |
+| `POST /logout` | open | drops the session |
+
+`/api/me` is deliberately open. The frontend calls it first to decide whether
+to render a login button or a dashboard, and a 401 there would be the normal
+case rather than an error. It discloses nothing to a signed-out caller beyond
+`signed_in: false`.
+
+`/logout` is `POST` rather than `GET` so it is not reachable from an
+`<img src="/logout">` on any page on the internet. Being logged out is a
+small harm, but a pointless one to leave available.
 
 `limit` is a **ceiling, not pagination**. There are thirteen rows; paging would
 be machinery guarding a problem that does not exist. It is written down in
@@ -462,6 +491,67 @@ Half the fields the page shows are not columns - `posted_url`, `run_url`,
 `dashboard.py` flattens them, so the frontend never has to know which fields
 were promoted to real columns and which were not, and promoting one later
 changes nothing on the other side of the wire.
+
+### What you can see, and who decides
+
+The scoping question - *which rows is this person allowed to read* - is
+answered by GitHub, not by BuildDoctor. That is the same rule the pipeline
+already follows when it re-reads `run_attempt` from the API instead of
+tracking attempts itself: ask the system that owns the fact.
+
+At sign-in, `GET /user/installations` is called with the user's own token.
+GitHub lists only the installations that user has explicit `:read`, `:write`
+or `:admin` access to, worked out from repository ownership, collaborator
+status and organisation membership. Reproducing that logic here would mean
+reimplementing GitHub's permission model from webhook payloads, and being
+subtly wrong about it is a disclosure rather than a bug.
+
+Those installation ids go into the session, and every query is filtered by
+them:
+
+```sql
+WHERE installation_id IN (...)  OR  installation_id IS NULL   -- owner only
+```
+
+The clause is built in `db.py` by `visibility_clause()`, and it **fails
+closed**: an empty installation list with no legacy access produces
+`false()` - a filter matching nothing - rather than no filter at all. The
+alternative shape, where an empty list means "do not filter", turns one
+forgotten argument into a full data dump. For the same reason
+`dashboard_stats()` and `list_diagnoses()` take their scoping arguments with
+**no defaults**, so a caller that forgets them is a `TypeError` at import
+rather than a leak in production.
+
+The session's installation list is a **snapshot** taken at login, and a
+snapshot goes stale - somebody can uninstall the App an hour into an
+eight-hour session. Every request therefore intersects it against the
+`installations` table, which the uninstall webhook deletes from. That
+intersection can only ever *shrink* the list; it removes access, never grants
+it.
+
+Revoking `is_allowed` is a separate question and deliberately does not hide
+anything. It stops BuildDoctor working for that installation; it does not
+confiscate diagnoses already written about that account's own repositories.
+
+### The rows that predate installation ids
+
+Five diagnoses were written before Phase 11 existed. Their `installation_id`
+is `NULL`, permanently, and there is no way to attribute them after the fact -
+the token that produced them belonged to a person, not an installation.
+
+**They are visible only to the account that registered the App.** Which
+account that is comes from `GET /app`, asked of GitHub rather than copied
+into an environment variable that could drift.
+
+The two alternatives were both worse. Hiding them from everyone silently
+removes five real diagnoses from every total, which makes the dashboard lie
+about its own history. Showing them to everyone hands one repository's log
+excerpts to the next stranger who installs BuildDoctor. Since they cannot be
+attributed, they belong to the one account that can be *proven* to own them.
+
+Note the SQL consequence: `NULL` cannot be matched by `IN (...)` - in SQL,
+`NULL` is not equal to anything, including itself - so those rows need their
+own `IS NULL` branch and could never leak in by accident.
 
 ### What each stat means
 
@@ -842,6 +932,33 @@ repeats the advice. The App ID is kept as a fallback.
 BuildDoctor. Seeds the decision only; see [the allowlist](#the-allowlist-and-why-it-lives-in-postgres).
 Empty means nobody, and there is no wildcard on purpose.
 
+**`GITHUB_APP_CLIENT_SECRET`** - a secret. Generated under **Client
+secrets** on the App's General settings page; GitHub shows it exactly once.
+It pairs with the public client ID to trade an authorization code for a user
+access token, which is how a person signs into the dashboard.
+
+Keep it straight from the private key. The private key says *"I am the App"*
+and mints installation tokens that can write to repositories. This one only
+ever participates in sign-in. Both are secrets; only one of them can post a
+comment.
+
+**`SESSION_SECRET`** - a secret, but a local one: nothing outside this
+service has ever seen it. It signs the dashboard's session cookie. Anyone
+holding it can forge a session for any GitHub login, including one with more
+installations than their own, so it is exactly as sensitive as the GitHub
+credentials despite coming from nowhere. Changing it invalidates every
+session, which makes it the emergency sign-everybody-out lever. Unset means
+sign-in is **disabled** and the app says so at startup, rather than falling
+back to a random key that would silently log everyone out on every restart.
+
+**`PUBLIC_BASE_URL`** - not a secret. Where the service is reachable from a
+browser, no trailing slash. The OAuth `redirect_uri` is built from it and
+must match the App's **Callback URL** byte for byte, since wildcard matching
+is deliberately off. It is an environment variable rather than something read
+off the request's `Host` header on purpose: the `Host` header is
+attacker-controlled, and deriving the redirect from it would let a forged
+request send the authorization code somewhere else.
+
 **`WEBHOOK_SECRET`** - any random string. Generate one with:
 
 ```powershell
@@ -915,7 +1032,7 @@ never expired, could not be revoked by the person whose repository it touched,
 and its scope was whatever that human happened to grant it. An installation
 token inverts all four.
 
-### Two credentials, and they are not interchangeable
+### Three credentials, and none of them are interchangeable
 
 ```
     the App's private key  ──signs──▶  a JWT  ──trades for──▶  an installation
@@ -923,17 +1040,105 @@ token inverts all four.
      never leaves the                   worth nothing           (1 hour, scoped
      server)                            on its own)             to ONE install)
 
-    the JWT                talks only to  /app/*
-    an installation token  talks to       /repos/*
+    a person signing in    ──code──▶   client secret  ──▶  a user access token
+                                                            (8 hours, ghu_)
 ```
 
-The JWT proves *"I am BuildDoctor."* It cannot read a repository or post a
-comment - the only useful thing it can do is ask for an installation token.
-The installation token proves *"I am BuildDoctor, here"*, carries only the
-permissions that installation accepted, and dies in an hour whether anyone
-remembers to rotate it or not.
+| Credential | Says | Talks to | Lives in |
+| ---------- | ---- | -------- | -------- |
+| the JWT | *"I am BuildDoctor."* | `/app/*` | `app_auth.py` |
+| an installation token | *"I am BuildDoctor, here."* | `/repos/*` | `app_auth.py` |
+| a user access token | *"I am this person."* | `/user/*` | `user_auth.py` |
 
-All of this lives in [`app_auth.py`](app_auth.py).
+The JWT cannot read a repository or post a comment - the only useful thing it
+can do is ask for an installation token. The installation token carries only
+the permissions that installation accepted and dies in an hour whether anyone
+remembers to rotate it or not. The user access token answers a question
+neither of the others can: **who is looking at the dashboard**, and what are
+they entitled to see.
+
+### Signing in with the App we already have (Phase 12)
+
+The obvious-looking move for "let people log in with GitHub" is to register an
+OAuth App. It is also unnecessary: a GitHub App already contains the whole
+user authorization flow. `builddoctor-ci` has a Client ID, a client secret and
+a Callback URL, and that is everything the web flow needs. So Phase 12 added a
+**credential type, not an application** - no second identity to configure, no
+second secret to rotate, nothing that can be uninstalled independently of the
+App whose data the dashboard shows.
+
+Enabling it was three settings on the existing App, not a registration:
+
+| Setting | Value | Why |
+| ------- | ----- | --- |
+| **Callback URL** | `https://builddoctor.onrender.com/auth/callback` | must match `redirect_uri` byte for byte |
+| *Enable wildcard matching* | **off** | a wildcard callback is an open-redirect hole - anyone who can steer the redirect gets the authorization code |
+| *Expire user authorization tokens* | **on** (default) | 8-hour token plus a 6-month refresh token; a leaked session then has an expiry date |
+| *Request user authorization (OAuth) during installation* | **off** | keeps "install on my repo" separate from "log into the dashboard", so an install still works for someone who never visits it |
+| *Enable Device Flow* | **off** | that is for tools with no browser |
+
+The flow itself:
+
+```
+/login            mint a state + PKCE pair, stash both in the session cookie,
+                  redirect to github.com/login/oauth/authorize
+/auth/callback    pop the pending state FIRST, compare it, POST the code to
+                  github.com/login/oauth/access_token, then ask GitHub
+                  GET /user  and  GET /user/installations
+                  write the session - and throw the token away
+POST /logout      drop the session
+```
+
+**What changed from the obvious assumption.** A GitHub App's user access
+token takes **no scopes**. There is no `scope=read:user` to send; the token
+carries the App's own fine-grained permissions, and the token response returns
+`scope` as an empty string, always. Nothing in `user_auth.py` asks for a
+scope, because writing one down would imply a control that does not exist.
+
+| Checked | Finding | Source |
+| ------- | ------- | ------ |
+| Which flow | GitHub App **user access token**, web application flow - not an OAuth App | [generating a user access token](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-a-user-access-token-for-a-github-app) |
+| Scopes | not used; `scope` comes back as an empty string | same |
+| PKCE | `code_challenge` + `code_challenge_method=S256` **strongly recommended** | same |
+| Token lifetime | `ghu_…`, **28800s (8 hours)**; refresh token `ghr_…`, 6 months | same |
+| Callback URLs | up to **10**; without wildcard matching the redirect must match **exactly** | [about the callback URL](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/about-the-user-authorization-callback-url) |
+| Access list | `GET /user/installations` needs a **user token**, lists only installations the user has `:read`/`:write`/`:admin` on | [REST: app installations](https://docs.github.com/en/rest/apps/installations) |
+
+**The token is used twice and thrown away.** It answers *who is this* and
+*what do they administer*, both answers go into the session, and the token
+does not. The session cookie is **signed, not encrypted** - the browser
+holding it can read what is inside - so a `ghu_` token in there would be
+handed to whoever holds the cookie in plaintext, which is strictly worse than
+not having it. A server-side store is not the answer either: in memory it
+logs everyone out on every cold start, and this instance cold-starts
+constantly; in Postgres it puts a live GitHub credential in the same table the
+dashboard reads.
+
+**CSRF and PKCE.** The `state` is generated per attempt, stored in the session
+cookie before the redirect, and compared with `hmac.compare_digest` on the way
+back. Without it, a crafted `/auth/callback` link carrying an attacker's code
+silently signs a victim into the attacker's account. It is popped from the
+session *before* anything is validated, so a failed or replayed attempt cannot
+retry it. PKCE is belt and braces on top: the code is useless without the
+verifier, which never leaves this origin.
+
+**`SameSite=Lax`, not `Strict`.** The callback arrives as a top-level
+navigation *from* github.com, and `Strict` would refuse to send the cookie on
+it - so the state written moments earlier would be invisible on the way back
+and every single sign-in would fail its own CSRF check. `Secure` is set only
+when `PUBLIC_BASE_URL` is https, because hard-coding it would silently drop
+the cookie on `http://localhost` and local development could never log in.
+
+**Same origin, on purpose.** The built dashboard is served by this same
+service under `/dashboard`. A cookie set by `builddoctor.onrender.com` is not
+sent on a request from a different site - that is what `SameSite` is for - and
+the workaround is `SameSite=None`, a third-party cookie, which browsers are in
+the middle of removing. One origin makes the problem disappear rather than
+managing it, and on a free plan with room for one service it was going to be
+one host anyway.
+
+All of the App-identity half lives in [`app_auth.py`](app_auth.py); sign-in
+lives in [`user_auth.py`](user_auth.py).
 
 ### Checked against the current docs, not recalled
 
@@ -1243,17 +1448,22 @@ queued jobs may be dropped". A late or skipped ping can still let the idle
 timer reach 15 minutes. Scheduled workflows also only run on the default
 branch, so this file does nothing until it is on `master`.
 
-### OPEN DEFECT: the schedule has never actually fired
+### OPEN DEFECT: the GitHub schedule does not run, and two pingers now
 
-Phase 11 measured this rather than trusting it, and the caveat above turns out
-to understate the problem badly.
+Phase 11 measured this rather than trusting it. Phase 12 measured it again
+and corrected the finding: it is not that the schedule has *never* fired, it
+is that it fires at roughly **2% of its schedule**, which is worse than a
+clean failure because it looks alive.
 
-`keep-warm.yml` landed on `master` at **10:44 UTC**. Over the following seven
-hours, `*/10 * * * *` should have produced roughly **42 runs**. It produced
-**zero**. The only run in the repository's history is the manual
-`workflow_dispatch` from Phase 10.
+| When measured | Cron | Due | Actually ran |
+| ------------- | ---- | --- | ------------ |
+| Phase 11, first 7h | `*/10 * * * *` | ~42 | 0 |
+| Phase 12, first 19h | `*/10 * * * *` | ~114 | 2 |
 
-Everything that would explain it checks out clean:
+Both runs that did land started about **8 minutes into their slot**
+(`20:48:17`, `04:58:32`), which is what a congested queue looks like rather
+than a misconfiguration. Everything that would explain a hard failure checks
+out clean:
 
 | Checked | Value |
 | ------- | ----- |
@@ -1263,36 +1473,76 @@ Everything that would explain it checks out clean:
 | `archived` / `disabled` | `false` / `false` |
 | Actions permissions | `enabled: true`, `allowed_actions: all` |
 
-**The cause is not established.** The most likely candidate is that
-`*/10 * * * *` fires on the exact ten-minute boundary, which is the most
-congested slot on GitHub's scheduler, and GitHub documents that queued
-scheduled jobs "may be dropped" under load - but zero out of ~42 is a lot more
-than "delayed", and this has not been proven.
+**The consequence is not hypothetical, and it is still happening.** Measured
+live during Phase 12, 45 minutes after the last successful ping:
 
-**The consequence is not hypothetical.** The App's very first `ping` delivery,
-at 17:27 UTC, is recorded in the App's delivery log as:
+```
+GET https://builddoctor.onrender.com/health -> 200 in 112.2s
+```
+
+112 seconds is a cold start. A webhook arriving in that window gets ten
+seconds and dies, with no redelivery. The App's very first `ping` delivery
+already died exactly that way:
 
 ```
 event=ping  status=... context deadline exceeded ... (500)  10s
 ```
 
-That is a cold start eating a webhook, ten seconds to the timeout, no
-redelivery - precisely the failure this workflow exists to prevent. It was
-only a ping, so nothing was lost. Had it been a failed build, the diagnosis
-would simply never have happened, and nothing in the application could have
-logged it, because the request never arrived.
-
-The fix to try first is moving the cron off the boundary, which is GitHub's
-own advice for congested schedules:
+#### Fix 1: move the cron off the boundary
 
 ```yaml
     - cron: "3,13,23,33,43,53 * * * *"
 ```
 
-This is left **unfixed and recorded** rather than quietly patched, because it
-is a defect in Phase 10's deliverable discovered while verifying Phase 11, and
-changing it deserves its own before/after measurement rather than a hopeful
-one-line edit.
+GitHub documents that the `schedule` event "can be delayed during periods of
+high loads", that "high load times include the start of every hour", and
+advises scheduling at a different time of the hour. Every `:00`, `:10`, `:20`
+boundary is where everybody else's cron already sits.
+
+This is a **hypothesis under test, not a fix**. Congestion is the likeliest
+explanation; what is established is only that the schedule does not run.
+
+#### Fix 2: a pinger that is not GitHub
+
+The more important change, because the first one is circular. Using GitHub
+Actions' scheduler to defend against GitHub's webhook-delivery timeout means
+that when GitHub is congested, both the failure and the defence against it
+happen at the same time. The 2% figure is that circularity already biting.
+
+So a second, independent ping runs on **[cron-job.org](https://cron-job.org)**
+- free, no card, no commercial-use restriction, and it stores the response
+body per execution rather than just a status code. It hits the same
+`/health` on the same 10-minute period, offset from the workflow, so between
+the two something reaches the service roughly every five minutes against a
+15-minute idle timeout.
+
+| Pinger | Schedule | Infrastructure |
+| ------ | -------- | -------------- |
+| `keep-warm.yml` | `:03 :13 :23 :33 :43 :53` | GitHub Actions |
+| cron-job.org | `:00 :10 :20 :30 :40 :50` | not GitHub |
+
+UptimeRobot's free tier was the other candidate and would work technically -
+50 monitors at 5-minute checks - but its Terms restrict the free plan to
+personal, non-commercial use, and BuildDoctor is an App other accounts are
+meant to install. That is a licence question to avoid building a reliability
+guarantee on top of.
+
+**The tradeoff of running both rather than picking one.** Two pingers cost
+nothing - `/health` is a database-free 200 - and they fail for uncorrelated
+reasons, which is the entire point. The real cost is interpretive: with two
+of them, "the service is warm" no longer tells you the Actions schedule
+recovered. So the workflow stays as an *instrument to read*, and cron-job.org
+is the thing actually keeping the lights on. A redundant pinger plus a
+truthful open defect beats one pinger and a false sense the defect is closed.
+
+**Expect red entries in cron-job.org's history.** Its request timeout is 30
+seconds and a cold start takes ~112, so the first ping after a sleep records
+as a failure while still having woken the service - the idle timer resets on
+the request arriving, not on the answer. One red followed by greens is the
+mechanism working. A wall of red is not, and the "job will be disabled
+because of too many failures" notification is deliberately left on for
+exactly that case: an auto-disabled keep-warm would be a silent return to
+the original problem.
 
 ## Running with Docker (the normal way)
 
