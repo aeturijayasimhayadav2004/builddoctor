@@ -30,6 +30,13 @@
 # window a great deal; it does not close it. Anything lost anyway can be
 # replayed by hand from the repository's webhook settings for 3 days.
 #
+# Phase 12 found that warning is an understatement here: measured over 19
+# hours, this workflow ran 2 times out of ~114 due. There is also a
+# circularity worth naming - this uses GitHub's scheduler to defend
+# against GitHub's webhook delivery timeout, so when GitHub is congested
+# both sides fail together, which is exactly when the defence is needed.
+# An independent pinger outside GitHub now runs alongside it.
+#
 # Scheduled workflows only run on the default branch, so this file has no
 # effect until it is on master.
 
@@ -39,7 +46,26 @@ on:
   schedule:
     # Every 10 minutes, against a 15-minute idle timeout, leaving 5
     # minutes of slack for GitHub's scheduling drift.
-    - cron: "*/10 * * * *"
+    #
+    # OFFSET OFF THE TEN-MINUTE BOUNDARY (Phase 12), AND HERE IS WHY.
+    #
+    # `*/10 * * * *` fired TWICE in the 19 hours after it reached master,
+    # against roughly 114 slots that were due. That is a 98% drop rate,
+    # not a delay. Both runs that did land started about 8 minutes into
+    # their slot, which is what a congested queue looks like.
+    #
+    # GitHub's own documentation says the schedule event "can be delayed
+    # during periods of high loads of GitHub Actions workflow runs",
+    # that "high load times include the start of every hour", and to
+    # "schedule your workflow to run at a different time of the hour" to
+    # reduce the chance of being dropped. Every :00, :10, :20 boundary is
+    # precisely where everybody else's cron sits.
+    #
+    # This is a cheap experiment, not a fix. Congestion is a hypothesis;
+    # what is established is only that the schedule does not run. The
+    # external pinger (see README, "Keeping the service awake") is what
+    # actually carries this now. This workflow is the second opinion.
+    - cron: "3,13,23,33,43,53 * * * *"
   # So the ping can be fired by hand from the Actions tab, which is also
   # how to test this without waiting for the next slot.
   workflow_dispatch:
