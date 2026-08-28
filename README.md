@@ -2,11 +2,18 @@
 
 An agent that watches a GitHub repo and reacts when a CI build fails.
 
-**Current stage: Phase 11 - it authenticates as a GitHub App, gated by an
-allowlist.** The backend runs in production at
-**<https://builddoctor.onrender.com>** and the dashboard at
-**<https://builddoctor-dashboard.onrender.com>**, against a Neon Postgres. See
-[Production](#production) for the topology and why it is shaped that way.
+**Current stage: Phase 14 - it is a public GitHub App that approves
+public-repository installations by itself.** Everything runs as one service at
+**<https://builddoctor.onrender.com>**, with the dashboard served from
+**<https://builddoctor.onrender.com/dashboard/>** on the same origin, against a
+Neon Postgres. See [Production](#production) for the topology and why it is
+shaped that way.
+
+> An earlier separate dashboard host exists at
+> `builddoctor-dashboard.onrender.com`. It is **dead** - not in `render.yaml`,
+> never redeployed, and still serving a pre-Phase-12 bundle with no sign-in.
+> Sign-in cannot work there anyway: `PUBLIC_BASE_URL` pins the OAuth callback
+> to the apex host byte for byte. Use the `/dashboard/` path and nothing else.
 
 There is no personal access token anywhere in the system any more. BuildDoctor
 is installed on a repository as the **BuildDoctor CI** GitHub App
@@ -15,17 +22,21 @@ key, and trades it for an installation access token that is scoped to that one
 installation and expires in an hour by itself. See
 [Authentication and access](#authentication-and-access).
 
-> **Two things Phase 11 deliberately did not fix, stated plainly.**
->
-> 1. The dashboard still has **no authentication**, and `/api/diagnoses`
->    returns every row to anyone who asks. `diagnoses.installation_id` is now
->    populated on every new row, but nothing filters on it yet. That is Phase
->    12's job. Until then, treat the dashboard URL as readable by anyone who
->    finds it.
-> 2. **Exactly one installation has ever been tested** - a single user
->    account, on a single repository, that also happens to own the App. No
->    organisation install, no second tenant, and no case where two
->    installations are active at once has been exercised even once.
+**Who can use it.** The App is public, so anyone can install it. An
+installation whose repositories are **all public** and explicitly selected is
+approved automatically, with no human in the loop - those logs were already
+world-readable, so an approval would have permitted something already
+permitted. An installation containing a **private** repository, or made on
+**"All repositories"**, waits for the App owner to press Approve. The gate is
+still `installations.is_allowed`, checked on every delivery; Phase 14 changed
+only who is allowed to set it. See
+[Automatic approval](#automatic-approval-and-the-exact-promise-it-makes-phase-14).
+
+**Before demoing it, run `python preflight.py`.** It asks Render, Neon, Groq
+and GitHub directly whether they are alive, checks the gate state of every
+installation, and confirms the protected routes still answer 401. Free-tier
+dependencies fail quietly; this makes the failure take thirty seconds to find
+instead of happening in front of somebody.
 
 When a workflow run fails, BuildDoctor fetches the
 logs and the triggering diff, **checks whether anything like this has failed
@@ -1552,7 +1563,7 @@ Live at **<https://builddoctor.onrender.com>**.
 | ----- | ------------- | --- |
 | App + MCP server | One Render **web service**, Free instance, Oregon | see below |
 | Postgres + pgvector | **Neon**, `aws-us-west-2`, Postgres 18, pgvector 0.8.6 | Render's free database expires; Neon's does not |
-| Dashboard | Render **static site**, Free | <https://builddoctor-dashboard.onrender.com> |
+| Dashboard | Served by the SAME web service, at `/dashboard/` | same origin, so the session cookie works |
 
 ### Why Neon rather than Render Postgres
 
